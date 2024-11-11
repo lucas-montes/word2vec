@@ -1,0 +1,15 @@
+[package]
+name = "word2vec"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+#ndarray = "0.16.1"
+
+rand = "0.8.5"
+rand_distr = "0.4.3"
+regex = "1.11.1"
+
+serde = { version = "1.0.213", features = ["derive"] }
+stop-words = "0.8.0"
+serde_json = "1.0.132"
