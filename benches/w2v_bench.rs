@@ -37,35 +37,21 @@ fn get_corpus(file_path: &str) -> String {
     corpus
 }
 
-fn bench_all() {
-    let raw_corpus = get_corpus("text7");
-    let corpus = parse_corpus(raw_corpus);
-    let cbow_params = CBOWParams::new(corpus.words_map.len())
-        .set_random_samples(10)
-        .set_embeddings_dimension(25)
-        .set_epochs(500)
-        .set_learning_rate(0.01);
-    let pairs = cbow_params.generate_pairs(&corpus.vec);
-    let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
-    train(
-        &pairs,
-        &cbow_params,
-        &mut input_layer,
-        &mut hidden_layer,
-        &corpus,
-    );
-}
-
 fn bench_text_processing() {
     let raw_corpus = get_corpus("text7");
     parse_corpus(raw_corpus);
 }
 
-fn bench_training(corpus: &CorpusValues) {
+fn bench_training(
+    corpus: &CorpusValues,
+    random_samples: usize,
+    embeddings_dimension: usize,
+    epochs: usize,
+) {
     let cbow_params = CBOWParams::new(corpus.words_map.len())
-        .set_random_samples(15)
-        .set_embeddings_dimension(200)
-        .set_epochs(50)
+        .set_random_samples(random_samples)
+        .set_embeddings_dimension(embeddings_dimension)
+        .set_epochs(epochs)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
@@ -85,18 +71,33 @@ fn bench(c: &mut Criterion) {
     let raw_corpus = get_corpus("text7");
     let corpus = parse_corpus(raw_corpus);
 
-    benchmark.bench_function(BenchmarkId::new("Bench all", "text7"), |bencher| {
-        bencher.iter(|| bench_all());
+    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 50), (15, 200, 100)];
+
+    for (random_samples, embeddings_dimension, epochs) in params {
+        benchmark.bench_function(
+            BenchmarkId::new(
+                "training",
+                format!(
+                    "random_samples-{}-embeddings_dimension-{}-epochs-{}",
+                    random_samples, embeddings_dimension, epochs
+                ),
+            ),
+            |bencher| {
+                bencher.iter(|| {
+                    bench_training(
+                        black_box(&corpus),
+                        random_samples,
+                        embeddings_dimension,
+                        epochs,
+                    )
+                });
+            },
+        );
+    }
+
+    benchmark.bench_function(BenchmarkId::new("text-processing", "text7"), |bencher| {
+        bencher.iter(|| bench_text_processing());
     });
-    benchmark.bench_function(BenchmarkId::new("Bench training", "text7"), |bencher| {
-        bencher.iter(|| bench_training(black_box(&corpus)));
-    });
-    benchmark.bench_function(
-        BenchmarkId::new("Bench text processing", "text7"),
-        |bencher| {
-            bencher.iter(|| bench_text_processing());
-        },
-    );
 }
 
 criterion_group! {

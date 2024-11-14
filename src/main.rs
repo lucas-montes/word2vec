@@ -1,29 +1,10 @@
 use serde_json::{json, Value};
 use std::{
     fs::{File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
+    time::Instant,
 };
 use word2vec::{parse_corpus, train, CBOWParams};
-
-fn save_changes(file_path: &str, values: Vec<Value>) {
-    let mut file = open_or_create_file(file_path);
-    file.set_len(0).unwrap();
-    file.write_all(serde_json::to_string_pretty(&values).unwrap().as_bytes())
-        .expect("something");
-}
-
-fn open_or_create_file(file_path: &str) -> File {
-    match OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(file_path)
-    {
-        Ok(value) => value,
-        Err(e) => panic!("Problem creating the file: {:?}", e),
-    }
-}
 
 fn generate_result(
     word: &str,
@@ -37,16 +18,37 @@ fn generate_result(
     json!({"word": word, "embedding":embedding })
 }
 
-fn main() {
-    let raw_corpus = "Today we will be learning about the fundamentals of data science and statistics. Data Science and statistics are hot and growing fields with alternative names of machine learning, artificial intelligence, big data, etc. I'm really excited to talk to you about data science and statistics because data science and statistics have long been a passions of mine. I didn't used to be very good at data science and statistics but after studying data science and statistics for a long time, I got better and better at it until I became a data science and statistics expert. I'm really excited to talk to you about data science and statistics, thanks for listening to me talk about data science and statistics.".to_string();
+fn get_corpus(file_path: &str) -> String {
+    let mut f = match OpenOptions::new()
+        .read(true)
+        .write(false)
+        .create(false)
+        .truncate(false)
+        .open(file_path)
+    {
+        Ok(value) => value,
+        Err(e) => panic!("Problem creating the file: {:?}", e),
+    };
+    let mut corpus = String::new();
+    f.read_to_string(&mut corpus).unwrap();
+    corpus
+}
 
-    let corpus = parse_corpus(raw_corpus);
+fn main() {
+    let start = Instant::now();
+    let corpus = parse_corpus(get_corpus("text8"));
+    let duration = start.elapsed();
+    println!("Time elapsed in parse_corpus() is: {:?}", duration);
+
     let cbow_params = CBOWParams::new(corpus.words_map.len())
         .set_embeddings_dimension(100)
         .set_epochs(300)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
+    let duration = start.elapsed();
+    println!("Time elapsed in create_matrices() is: {:?}", duration);
+
     train(
         &pairs,
         &cbow_params,
@@ -54,12 +56,29 @@ fn main() {
         &mut hidden_layer,
         &corpus,
     );
+    let duration = start.elapsed();
+    println!("Time elapsed in train() is: {:?}", duration);
 
     let values = corpus
         .words_map
         .into_iter()
-        .map(|(k, v)| generate_result(&k, &v, &input_layer, cbow_params.embeddings_dimension()))
-        .collect();
+        .map(|(k, v)| generate_result(&k, &v, &input_layer, cbow_params.embeddings_dimension()));
 
-    save_changes("result.json", values)
+    let mut file = match OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open("result.json")
+    {
+        Ok(value) => value,
+        Err(e) => panic!("Problem creating the file: {:?}", e),
+    };
+    file.set_len(0).unwrap();
+
+    for value in values {
+        file.write_all(serde_json::to_string(&value).unwrap().as_bytes())
+            .expect("something");
+        file.write(b"\n").expect("something");
+    }
 }

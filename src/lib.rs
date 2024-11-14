@@ -4,6 +4,7 @@ use regex::Regex;
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
+    ops::Neg,
 };
 
 #[derive(Debug)]
@@ -140,7 +141,7 @@ pub fn parse_corpus(mut corpus: String) -> CorpusValues {
 }
 
 fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + (-x).exp())
+    1.0 / (1.0 + x.neg().exp())
 }
 
 pub fn train(
@@ -158,10 +159,12 @@ pub fn train(
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
             // pass the input layer to the hidden layer
-            for position in 0..cbow_params.embeddings_dimension {
+            for position in 0..neu1.len() {
                 let mut f = 0.0;
                 for context_index in context {
-                    f += &input_layer[position + *context_index * cbow_params.embeddings_dimension];
+                    //TODO: panic bound
+                    let i = position + *context_index * cbow_params.embeddings_dimension;
+                    f += &input_layer[i];
                 }
                 neu1[position] = f;
             }
@@ -176,7 +179,7 @@ pub fn train(
 
             let g = (1.0 - sigmoid(f)) * cbow_params.learning_rate;
 
-            for c in 0..cbow_params.embeddings_dimension {
+            for c in 0..neu1e.len() {
                 neu1e[c] = g * hidden_layer[c + target_l2];
                 hidden_layer[c + target_l2] += g * neu1[c];
             }
@@ -196,7 +199,7 @@ pub fn train(
                     .sum();
 
                 let g = (0.0 - sigmoid(f)) * cbow_params.learning_rate;
-                for c in 0..cbow_params.embeddings_dimension {
+                for c in 0..neu1e.len() {
                     neu1e[c] += g * hidden_layer[c + l2];
                     hidden_layer[c + l2] += g * neu1[c];
                 }
@@ -252,5 +255,10 @@ mod tests {
             .unwrap();
         assert_eq!(context, &[0, 1, 0, 3]);
         assert_eq!(target, 2);
+    }
+
+    #[test]
+    fn test_sigmoid() {
+        assert_eq!(sigmoid(0.23894692834), 0.5594541);
     }
 }

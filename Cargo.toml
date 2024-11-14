@@ -22,7 +22,7 @@ pprof = { version = "0.11.0", features = [
 ]}
 
 [profile.release]
-debug = 1
+debug = true
 
 [[bench]]
 name = "w2v_bench"
