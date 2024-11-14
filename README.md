@@ -2,6 +2,9 @@
 
 The word2vec model in pure rust.
 
+
+To save a baseline, use `cargo bench --bench w2v_bench -- --save-baseline <name>`. To compare against an existing baseline, use `cargo bench --bench w2v_bench -- --baseline <name>`. For more on baselines, see below.
+
 To benchmark
 ```bash
 cargo bench

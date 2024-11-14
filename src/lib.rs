@@ -1,7 +1,10 @@
 use rand::{seq::SliceRandom, thread_rng};
 use rand_distr::{Distribution, Normal};
 use regex::Regex;
-use std::{borrow::Cow, collections::HashMap};
+use std::{
+    borrow::Cow,
+    collections::{HashMap, HashSet},
+};
 
 #[derive(Debug)]
 pub struct CorpusValues {
@@ -19,8 +22,9 @@ impl CorpusValues {
     pub fn populate<'a>(mut self, clean_corpus: Cow<'a, str>) -> Self {
         let stop_words = stop_words::get(stop_words::LANGUAGE::English);
         let mut index = 0;
+        let sw: HashSet<&str> = HashSet::from_iter(stop_words.iter().map(|s| s.as_str()));
         for word in clean_corpus.split_whitespace() {
-            if !stop_words.iter().any(|s| s.eq(word)) {
+            if !sw.contains(word) {
                 if self.words_map.contains_key(word) {
                     let i = self.words_map.get(word).unwrap();
                     self.vec.push(*i);
@@ -171,8 +175,8 @@ fn sigmoid(x: f32) -> f32 {
 pub fn train(
     pairs: &[(Vec<usize>, usize)],
     cbow_params: &CBOWParams,
-    input_layer: &mut Vec<f32>,
-    hidden_layer: &mut Vec<f32>,
+    input_layer: &mut [f32],
+    hidden_layer: &mut [f32],
     corpus: &CorpusValues,
 ) {
     let mut neu1: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
