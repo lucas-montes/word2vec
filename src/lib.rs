@@ -10,19 +10,19 @@ use std::{
 };
 
 #[derive(Debug)]
-struct CorpusValues {
-    words_map: HashMap<String, usize>,
-    vec: Vec<usize>,
+pub struct CorpusValues {
+    pub words_map: HashMap<String, usize>,
+    pub vec: Vec<usize>,
 }
 
 impl CorpusValues {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             words_map: HashMap::new(),
             vec: Vec::new(),
         }
     }
-    fn populate<'a>(mut self, clean_corpus: Cow<'a, str>) -> Self {
+    pub fn populate<'a>(mut self, clean_corpus: Cow<'a, str>) -> Self {
         let stop_words = stop_words::get(stop_words::LANGUAGE::English);
         let mut index = 0;
         for word in clean_corpus.split_whitespace() {
@@ -42,7 +42,7 @@ impl CorpusValues {
     }
 }
 
-struct CBOWParams {
+pub struct CBOWParams {
     vocab_size: usize,
     embeddings_dimension: usize, // Test with size 25 to 1000. More corpus more dimension
     random_samples: usize,
@@ -54,36 +54,36 @@ struct CBOWParams {
     epochs: usize,
 }
 impl CBOWParams {
-    fn set_random_samples(mut self, random_samples: usize) -> Self {
+    pub fn set_random_samples(mut self, random_samples: usize) -> Self {
         self.random_samples = random_samples;
         self
     }
-    fn set_embeddings_dimension(mut self, embeddings_dimension: usize) -> Self {
+    pub fn set_embeddings_dimension(mut self, embeddings_dimension: usize) -> Self {
         self.embeddings_dimension = embeddings_dimension;
         self
     }
-    fn set_mean(mut self, mean: f32) -> Self {
+    pub fn set_mean(mut self, mean: f32) -> Self {
         self.mean = mean;
         self
     }
-    fn set_std_dev(mut self, std_dev: f32) -> Self {
+    pub fn set_std_dev(mut self, std_dev: f32) -> Self {
         self.std_dev = std_dev;
         self
     }
-    fn set_window_size(mut self, window_size: usize) -> Self {
+    pub fn set_window_size(mut self, window_size: usize) -> Self {
         self.window_size = window_size * 2 + 1;
         self.target = window_size;
         self
     }
-    fn set_learning_rate(mut self, learning_rate: f32) -> Self {
+    pub fn set_learning_rate(mut self, learning_rate: f32) -> Self {
         self.learning_rate = learning_rate;
         self
     }
-    fn set_epochs(mut self, epochs: usize) -> Self {
+    pub fn set_epochs(mut self, epochs: usize) -> Self {
         self.epochs = epochs;
         self
     }
-    fn default() -> Self {
+    pub fn default() -> Self {
         let window_size = 2;
         Self {
             vocab_size: 0,
@@ -97,13 +97,13 @@ impl CBOWParams {
             epochs: 100,
         }
     }
-    fn new(vocab_size: usize) -> Self {
+    pub fn new(vocab_size: usize) -> Self {
         let mut result = Self::default();
         result.vocab_size = vocab_size;
         result
     }
 
-    fn create_matrices(&self) -> (Vec<f32>, Vec<f32>) {
+    pub fn create_matrices(&self) -> (Vec<f32>, Vec<f32>) {
         // set the embeddings_dimension from and type
         let normal = Normal::new(self.mean, self.std_dev).unwrap();
         let mut rng = thread_rng();
@@ -120,6 +120,7 @@ impl CBOWParams {
     }
 
     fn get_random_indices(&self, target: &usize, corpus: &[usize]) -> Vec<usize> {
+        //TODO: make faster avoid collecting
         let mut rng = thread_rng();
         corpus
             .choose_multiple(&mut rng, self.random_samples)
@@ -128,7 +129,7 @@ impl CBOWParams {
             .collect()
     }
 
-    fn generate_pairs(&self, corpus: &[usize]) -> Vec<(Vec<usize>, usize)> {
+    pub fn generate_pairs(&self, corpus: &[usize]) -> Vec<(Vec<usize>, usize)> {
         //TODO: iterator
         corpus
             .windows(self.window_size)
@@ -141,18 +142,20 @@ impl CBOWParams {
     }
 }
 
-fn parse_corpus(mut corpus: String) -> CorpusValues {
+pub fn parse_corpus(mut corpus: String) -> CorpusValues {
     let re = Regex::new(r"[[:punct:]]").unwrap();
     corpus.make_ascii_lowercase();
     let clean_corpus = re.replace_all(&corpus, "");
     CorpusValues::new().populate(clean_corpus)
 }
 
-fn get_context_embedding(
+pub fn update_context_embedding(
     context_indices: &[usize],
     embeddings_dimension: usize,
     embeddings: &[f32],
-) -> Vec<f32> {
+    neu1: &mut [f32],
+) {
+    //TODO: make faster avoid collecting
     //TODO: perform either sum or average, currently only the sum.
     // Sum
     (0..embeddings_dimension)
@@ -162,25 +165,32 @@ fn get_context_embedding(
                 .map(|context_index| embeddings[position + *context_index * embeddings_dimension])
                 .sum()
         })
-        .collect()
+        .enumerate()
+        .for_each(|(k, v)| neu1[k] = v)
 }
 
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
 
-fn train(
+pub fn train(
     pairs: &[(Vec<usize>, usize)],
     cbow_params: &CBOWParams,
     input_layer: &mut Vec<f32>,
-    mut hidden_layer: Vec<f32>,
+    hidden_layer: &mut Vec<f32>,
     corpus: &CorpusValues,
 ) {
+    let mut neu1: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
+    let mut neu1e: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
             // pass the input layer to the hidden layer
-            let neu1 =
-                get_context_embedding(&context, cbow_params.embeddings_dimension, &input_layer);
+            update_context_embedding(
+                &context,
+                cbow_params.embeddings_dimension,
+                &input_layer,
+                &mut neu1,
+            );
 
             // negative sampling
             let target_l2 = target * cbow_params.embeddings_dimension;
@@ -188,15 +198,14 @@ fn train(
                 .iter()
                 .enumerate()
                 .map(|(i, v)| v * hidden_layer[i + target_l2])
-                .sum();
+                .sum::<f32>();
 
             let g = (1.0 - sigmoid(f)) * cbow_params.learning_rate;
 
-            let mut neu1e: Vec<f32> = (0..cbow_params.embeddings_dimension)
-                .map(|c| g * hidden_layer[c + target_l2])
-                .collect();
-            (0..cbow_params.embeddings_dimension)
-                .for_each(|c| hidden_layer[c + target_l2] += g * neu1[c]);
+            for c in 0..cbow_params.embeddings_dimension {
+                neu1e[c] = g * hidden_layer[c + target_l2];
+                hidden_layer[c + target_l2] += g * neu1[c];
+            }
 
             for negative_target in cbow_params.get_random_indices(&target, &corpus.vec) {
                 let l2 = negative_target * cbow_params.embeddings_dimension;
@@ -207,17 +216,16 @@ fn train(
                     .sum();
 
                 let g = (0.0 - sigmoid(f)) * cbow_params.learning_rate;
-
-                (0..cbow_params.embeddings_dimension)
-                    .for_each(|c| neu1e[c] += g * hidden_layer[c + l2]);
-                (0..cbow_params.embeddings_dimension)
-                    .for_each(|c| hidden_layer[c + l2] += g * neu1[c]);
+                for c in 0..cbow_params.embeddings_dimension {
+                    neu1e[c] += g * hidden_layer[c + l2];
+                    hidden_layer[c + l2] += g * neu1[c];
+                }
             }
 
             // backpropagation, pass the hidden layer to the input layer
-            context.iter().for_each(|index| {
-                (0..cbow_params.embeddings_dimension).for_each(|c| {
-                    input_layer[c + index * cbow_params.embeddings_dimension] += neu1e[c]
+            context.iter().for_each(|context_index| {
+                neu1e.iter().enumerate().for_each(|(k, v)| {
+                    input_layer[k + context_index * cbow_params.embeddings_dimension] += v;
                 })
             });
         }
@@ -265,12 +273,12 @@ fn main() {
         .set_epochs(300)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
-    let (mut input_layer, hidden_layer) = cbow_params.create_matrices();
+    let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
     train(
         &pairs,
         &cbow_params,
         &mut input_layer,
-        hidden_layer,
+        &mut hidden_layer,
         &corpus,
     );
 
@@ -310,7 +318,7 @@ mod tests {
         let cbow_params = default_params();
         let (input_layer, hidden_layer) = cbow_params.create_matrices();
         assert_eq!(input_layer.len(), hidden_layer.len());
-        assert_eq!(input_layer.len(), 12);
+        assert_eq!(input_layer.len(), 400);
     }
 
     #[test]
@@ -326,14 +334,20 @@ mod tests {
     }
 
     #[test]
-    fn test_get_context_embedding() {
+    fn test_update_context_embedding() {
         let embeddings_dimension = 4;
         let embeddings = vec![
             0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.1, 0.1, 1.0, 1.0, 1.0, 1.0, 0.1, 0.1, 0.3, 0.1, 0.4,
             0.1, 0.1, 0.1,
         ];
         let context = [0, 1, 3, 4];
-        let context_embedding = get_context_embedding(&context, embeddings_dimension, &embeddings);
-        assert_eq!(context_embedding, vec![0.7000000000000001, 0.5, 0.6, 0.4]);
+        let mut context_embedding = vec![0.0; embeddings_dimension];
+        update_context_embedding(
+            &context,
+            embeddings_dimension,
+            &embeddings,
+            &mut context_embedding,
+        );
+        assert_eq!(context_embedding, vec![0.70000005, 0.5, 0.6, 0.4]);
     }
 }
