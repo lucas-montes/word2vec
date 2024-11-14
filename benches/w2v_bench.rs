@@ -42,8 +42,8 @@ fn bench_all() {
     let corpus = parse_corpus(raw_corpus);
     let cbow_params = CBOWParams::new(corpus.words_map.len())
         .set_random_samples(10)
-        .set_embeddings_dimension(100)
-        .set_epochs(20)
+        .set_embeddings_dimension(50)
+        .set_epochs(50)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
@@ -64,7 +64,7 @@ fn bench_text_processing() {
 fn bench_training(corpus: &CorpusValues) {
     let cbow_params = CBOWParams::new(corpus.words_map.len())
         .set_random_samples(15)
-        .set_embeddings_dimension(100)
+        .set_embeddings_dimension(50)
         .set_epochs(50)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);

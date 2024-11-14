@@ -1,5 +1,5 @@
-use rand::{seq::SliceRandom, thread_rng};
-use rand_distr::{Distribution, Normal};
+use rand::thread_rng;
+use rand_distr::{Distribution, Normal, Uniform};
 use regex::Regex;
 use std::{
     borrow::Cow,
@@ -120,18 +120,7 @@ impl CBOWParams {
         (input_matrix, output_matrix)
     }
 
-    fn get_random_indices(&self, target: &usize, corpus: &[usize]) -> Vec<usize> {
-        //TODO: make faster avoid collecting
-        let mut rng = thread_rng();
-        corpus
-            .choose_multiple(&mut rng, self.random_samples)
-            .cloned()
-            .filter(|x| x.eq(target))
-            .collect()
-    }
-
     pub fn generate_pairs(&self, corpus: &[usize]) -> Vec<(Vec<usize>, usize)> {
-        //TODO: iterator
         corpus
             .windows(self.window_size)
             .map(|w| {
@@ -150,6 +139,7 @@ pub fn parse_corpus(mut corpus: String) -> CorpusValues {
     CorpusValues::new().populate(clean_corpus)
 }
 
+#[inline(always)]
 pub fn update_context_embedding(
     context_indices: &[usize],
     embeddings_dimension: usize,
@@ -157,15 +147,12 @@ pub fn update_context_embedding(
     neu1: &mut [f32],
 ) {
     //TODO: perform either sum or average, currently only the sum.
-    (0..embeddings_dimension)
-        .map(|position| {
-            context_indices
-                .iter()
-                .map(|context_index| embeddings[position + *context_index * embeddings_dimension])
-                .sum()
-        })
-        .enumerate()
-        .for_each(|(k, v)| neu1[k] = v)
+    for position in 0..embeddings_dimension {
+        neu1[position] = context_indices
+            .iter()
+            .map(|context_index| embeddings[position + *context_index * embeddings_dimension])
+            .sum();
+    }
 }
 
 fn sigmoid(x: f32) -> f32 {
@@ -181,6 +168,9 @@ pub fn train(
 ) {
     let mut neu1: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
     let mut neu1e: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
+    let between = Uniform::from(0..corpus.vec.len() - cbow_params.random_samples);
+    let mut rng = thread_rng();
+
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
             // pass the input layer to the hidden layer
@@ -206,7 +196,13 @@ pub fn train(
                 hidden_layer[c + target_l2] += g * neu1[c];
             }
 
-            for negative_target in cbow_params.get_random_indices(&target, &corpus.vec) {
+            let breakpoint = between.sample(&mut rng);
+
+            let random_indices = corpus.vec[breakpoint..cbow_params.random_samples + breakpoint]
+                .iter()
+                .filter(|x| x.eq(&target));
+
+            for negative_target in random_indices {
                 let l2 = negative_target * cbow_params.embeddings_dimension;
                 let f: f32 = neu1
                     .iter()
