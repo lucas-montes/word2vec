@@ -139,22 +139,6 @@ pub fn parse_corpus(mut corpus: String) -> CorpusValues {
     CorpusValues::new().populate(clean_corpus)
 }
 
-#[inline(always)]
-pub fn update_context_embedding(
-    context_indices: &[usize],
-    embeddings_dimension: usize,
-    embeddings: &[f32],
-    neu1: &mut [f32],
-) {
-    //TODO: perform either sum or average, currently only the sum.
-    for position in 0..embeddings_dimension {
-        neu1[position] = context_indices
-            .iter()
-            .map(|context_index| embeddings[position + *context_index * embeddings_dimension])
-            .sum();
-    }
-}
-
 fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + (-x).exp())
 }
@@ -174,12 +158,13 @@ pub fn train(
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
             // pass the input layer to the hidden layer
-            update_context_embedding(
-                &context,
-                cbow_params.embeddings_dimension,
-                &input_layer,
-                &mut neu1,
-            );
+            for position in 0..cbow_params.embeddings_dimension {
+                let mut f = 0.0;
+                for context_index in context {
+                    f += &input_layer[position + *context_index * cbow_params.embeddings_dimension];
+                }
+                neu1[position] = f;
+            }
 
             // negative sampling
             let target_l2 = target * cbow_params.embeddings_dimension;
@@ -267,23 +252,5 @@ mod tests {
             .unwrap();
         assert_eq!(context, &[0, 1, 0, 3]);
         assert_eq!(target, 2);
-    }
-
-    #[test]
-    fn test_update_context_embedding() {
-        let embeddings_dimension = 4;
-        let embeddings = vec![
-            0.1, 0.1, 0.1, 0.1, 0.1, 0.2, 0.1, 0.1, 1.0, 1.0, 1.0, 1.0, 0.1, 0.1, 0.3, 0.1, 0.4,
-            0.1, 0.1, 0.1,
-        ];
-        let context = [0, 1, 3, 4];
-        let mut context_embedding = vec![0.0; embeddings_dimension];
-        update_context_embedding(
-            &context,
-            embeddings_dimension,
-            &embeddings,
-            &mut context_embedding,
-        );
-        assert_eq!(context_embedding, vec![0.70000005, 0.5, 0.6, 0.4]);
     }
 }

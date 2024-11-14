@@ -7,7 +7,7 @@ use std::{fs::OpenOptions, io::Read, time::Duration};
 use word2vec::{parse_corpus, train, CBOWParams, CorpusValues};
 
 fn set_default_benchmark_configs(benchmark: &mut BenchmarkGroup<WallTime>) {
-    let sample_size: usize = 200;
+    let sample_size: usize = 100;
     let measurement_time: Duration = Duration::new(10, 0);
     let confidence_level: f64 = 0.97;
     let warm_up_time: Duration = Duration::new(10, 0);
@@ -42,8 +42,8 @@ fn bench_all() {
     let corpus = parse_corpus(raw_corpus);
     let cbow_params = CBOWParams::new(corpus.words_map.len())
         .set_random_samples(10)
-        .set_embeddings_dimension(50)
-        .set_epochs(50)
+        .set_embeddings_dimension(25)
+        .set_epochs(500)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
@@ -64,7 +64,7 @@ fn bench_text_processing() {
 fn bench_training(corpus: &CorpusValues) {
     let cbow_params = CBOWParams::new(corpus.words_map.len())
         .set_random_samples(15)
-        .set_embeddings_dimension(50)
+        .set_embeddings_dimension(200)
         .set_epochs(50)
         .set_learning_rate(0.01);
     let pairs = cbow_params.generate_pairs(&corpus.vec);

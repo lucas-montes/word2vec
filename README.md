@@ -15,7 +15,7 @@ To profile
 cargo bench --bench w2v_bench -- --profile-time 30
 ```
 
-text7 has 1350 words
+text7 has 13550 words
 text8 has 17005207 words
 
 ```bash
