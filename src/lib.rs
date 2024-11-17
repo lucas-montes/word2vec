@@ -64,6 +64,9 @@ impl CBOWParams {
     pub fn embeddings_dimension(&self) -> usize {
         self.embeddings_dimension
     }
+    pub fn vocab_size(&self) -> usize {
+        self.vocab_size
+    }
     pub fn set_mean(mut self, mean: f32) -> Self {
         self.mean = mean;
         self
@@ -101,6 +104,9 @@ impl CBOWParams {
     }
     pub fn new(vocab_size: usize) -> Self {
         let mut result = Self::default();
+        if vocab_size <= result.random_samples {
+            result.random_samples = vocab_size - 1;
+        }
         result.vocab_size = vocab_size;
         result
     }
@@ -217,6 +223,8 @@ pub fn train(
 
 #[cfg(test)]
 mod tests {
+    use ndarray::Array;
+
     use super::*;
 
     fn default_params() -> CBOWParams {
@@ -260,5 +268,33 @@ mod tests {
     #[test]
     fn test_sigmoid() {
         assert_eq!(sigmoid(0.23894692834), 0.5594541);
+    }
+
+    #[test]
+    fn test_train() {
+        let corpus = parse_corpus("uno and dos tres uno cinco".into());
+
+        let cbow_params = CBOWParams::new(corpus.words_map.len())
+            .set_embeddings_dimension(3)
+            .set_epochs(10)
+            .set_learning_rate(0.01);
+        let pairs = cbow_params.generate_pairs(&corpus.vec);
+        let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
+
+        train(
+            &pairs,
+            &cbow_params,
+            &mut input_layer,
+            &mut hidden_layer,
+            &corpus,
+        );
+
+        let r = Array::from_shape_vec(
+            (3, 3),
+            [0.0, 1.0, 0.0, 3.0, 0.0, 1.0, 1.0, 0.0, 3.0].to_vec(),
+        );
+
+        println!("{:?}", r);
+        // assert_eq!(input_layer, vec![0.0]);
     }
 }
