@@ -32,7 +32,6 @@ impl CorpusValues {
                     let i = self.words_map.get(word).unwrap();
                     self.vec.push(*i);
                 } else {
-                    //TODO: create the initial embeddings here
                     self.words_map.insert(word.to_string(), index);
                     self.vec.push(index);
                     index += 1;
@@ -170,20 +169,18 @@ pub fn train(
                 .filter(|x| x.eq(&target));
 
             for &negative_target in random_indices {
-                let mut target_slice = hidden_layer.row_mut(negative_target);
-                let f = neu1.dot(&target_slice);
-                let g = (0.0 - sigmoid(f)) * cbow_params.learning_rate;
-
-                neu1e += &(g * &target_slice);
-                target_slice += &(g * &neu1);
+                update_hidden_layer_and_neurone(
+                    hidden_layer,
+                    &neu1,
+                    &mut neu1e,
+                    negative_target,
+                    cbow_params.learning_rate,
+                    0.0,
+                )
             }
 
             // backpropagation, pass the hidden layer to the input layer
-            // update_input_layer
-            for &context_index in context {
-                let mut row_slice = input_layer.row_mut(context_index);
-                row_slice += &neu1e;
-            }
+            update_input_layer(input_layer, &neu1e, context);
         }
     }
 }
@@ -225,7 +222,7 @@ fn update_hidden_layer_and_neurone(
     let f = neu1.dot(&target_slice);
     let g = (sign - sigmoid(f)) * learning_rate;
 
-    neu1e.assign(&(g * &target_slice));
+    *neu1e += &(g * &target_slice);
     target_slice += &(g * neu1);
 }
 
