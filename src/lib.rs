@@ -1,3 +1,5 @@
+use ndarray::{s, Array1, Array2, Axis};
+use ndarray_rand::RandomExt;
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal, Uniform};
 use regex::Regex;
@@ -111,19 +113,10 @@ impl CBOWParams {
         result
     }
 
-    pub fn create_matrices(&self) -> (Vec<f32>, Vec<f32>) {
-        // set the embeddings_dimension from and type
+    pub fn create_matrices(&self) -> (Array2<f32>, Array2<f32>) {
         let normal = Normal::new(self.mean, self.std_dev).unwrap();
-        let mut rng = thread_rng();
-        let input_matrix: Vec<f32> = (0..self.vocab_size)
-            .flat_map(|_| {
-                (0..self.embeddings_dimension)
-                    .map(|_| normal.sample(&mut rng))
-                    .collect::<Vec<f32>>()
-            })
-            .collect();
-        let output_matrix = vec![0.0; self.vocab_size * self.embeddings_dimension];
-
+        let input_matrix = Array2::random((self.vocab_size, self.embeddings_dimension), normal);
+        let output_matrix = Array2::zeros((self.vocab_size, self.embeddings_dimension));
         (input_matrix, output_matrix)
     }
 
@@ -146,49 +139,29 @@ pub fn parse_corpus(mut corpus: String) -> CorpusValues {
     CorpusValues::new().populate(clean_corpus)
 }
 
-fn sigmoid(x: f32) -> f32 {
-    1.0 / (1.0 + x.neg().exp())
-}
-
 pub fn train(
     pairs: &[(Vec<usize>, usize)],
     cbow_params: &CBOWParams,
-    input_layer: &mut [f32],
-    hidden_layer: &mut [f32],
+    input_layer: &mut Array2<f32>,
+    hidden_layer: &mut Array2<f32>,
     corpus: &CorpusValues,
 ) {
-    let mut neu1: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
-    let mut neu1e: Vec<f32> = vec![0.0; cbow_params.embeddings_dimension];
     let between = Uniform::from(0..corpus.vec.len() - cbow_params.random_samples);
     let mut rng = thread_rng();
 
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
             // pass the input layer to the hidden layer
-            for position in 0..neu1.len() {
-                let mut f = 0.0;
-                for context_index in context {
-                    //TODO: panic bound
-                    let i = position + *context_index * cbow_params.embeddings_dimension;
-                    f += &input_layer[i];
-                }
-                neu1[position] = f;
-            }
+            let neu1 = get_neurone(input_layer, context, cbow_params.embeddings_dimension());
 
             // negative sampling
-            let target_l2 = target * cbow_params.embeddings_dimension;
-            let f = neu1
-                .iter()
-                .enumerate()
-                .map(|(i, v)| v * hidden_layer[i + target_l2])
-                .sum::<f32>();
-
+            // update_hidden_layer_and_neurone
+            let mut target_slice = hidden_layer.row_mut(*target);
+            let f = neu1.dot(&target_slice);
             let g = (1.0 - sigmoid(f)) * cbow_params.learning_rate;
 
-            for c in 0..neu1e.len() {
-                neu1e[c] = g * hidden_layer[c + target_l2];
-                hidden_layer[c + target_l2] += g * neu1[c];
-            }
+            let mut neu1e = g * &target_slice;
+            target_slice += &(g * &neu1);
 
             let breakpoint = between.sample(&mut rng);
 
@@ -196,34 +169,69 @@ pub fn train(
                 .iter()
                 .filter(|x| x.eq(&target));
 
-            for negative_target in random_indices {
-                let l2 = negative_target * cbow_params.embeddings_dimension;
-                let f: f32 = neu1
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| v * hidden_layer[i + l2])
-                    .sum();
-
+            for &negative_target in random_indices {
+                let mut target_slice = hidden_layer.row_mut(negative_target);
+                let f = neu1.dot(&target_slice);
                 let g = (0.0 - sigmoid(f)) * cbow_params.learning_rate;
-                for c in 0..neu1e.len() {
-                    neu1e[c] += g * hidden_layer[c + l2];
-                    hidden_layer[c + l2] += g * neu1[c];
-                }
+
+                neu1e += &(g * &target_slice);
+                target_slice += &(g * &neu1);
             }
 
             // backpropagation, pass the hidden layer to the input layer
-            context.iter().for_each(|context_index| {
-                neu1e.iter().enumerate().for_each(|(k, v)| {
-                    input_layer[k + context_index * cbow_params.embeddings_dimension] += v;
-                })
-            });
+            // update_input_layer
+            for &context_index in context {
+                let mut row_slice = input_layer.row_mut(context_index);
+                row_slice += &neu1e;
+            }
         }
     }
 }
 
+fn update_input_layer(input_layer: &mut Array2<f32>, neu1e: &Array1<f32>, context: &[usize]) {
+    for &context_index in context {
+        let mut row_slice = input_layer.row_mut(context_index);
+        row_slice += neu1e;
+    }
+}
+
+fn sigmoid(x: f32) -> f32 {
+    1.0 / (1.0 + x.neg().exp())
+}
+
+fn get_neurone(
+    input_layer: &Array2<f32>,
+    context: &[usize],
+    embeddings_dimension: usize,
+) -> Array1<f32> {
+    let mut s = Array1::zeros(embeddings_dimension);
+
+    for &context_index in context {
+        let row_slice = input_layer.row(context_index);
+        s += &row_slice;
+    }
+    s
+}
+
+fn update_hidden_layer_and_neurone(
+    hidden_layer: &mut Array2<f32>,
+    neu1: &Array1<f32>,
+    neu1e: &mut Array1<f32>,
+    target: usize,
+    learning_rate: f32,
+    sign: f32,
+) {
+    let mut target_slice = hidden_layer.row_mut(target);
+    let f = neu1.dot(&target_slice);
+    let g = (sign - sigmoid(f)) * learning_rate;
+
+    neu1e.assign(&(g * &target_slice));
+    target_slice += &(g * neu1);
+}
+
 #[cfg(test)]
 mod tests {
-    use ndarray::Array;
+    use ndarray::array;
 
     use super::*;
 
@@ -271,30 +279,36 @@ mod tests {
     }
 
     #[test]
-    fn test_train() {
-        let corpus = parse_corpus("uno and dos tres uno cinco".into());
+    fn test_get_neurone() {
+        let input_layer = array![
+            [0.1, 1.0, 0.0, 3.0,],
+            [0.2, 1.0, 0.0, 3.0,],
+            [0.3, 1.0, 0.0, 3.0,]
+        ];
+        let context = [1, 2];
+        let result = get_neurone(&input_layer, &context, 4);
+        assert_eq!(result, array![0.5, 2.0, 0.0, 6.0]);
+    }
 
-        let cbow_params = CBOWParams::new(corpus.words_map.len())
-            .set_embeddings_dimension(3)
-            .set_epochs(10)
-            .set_learning_rate(0.01);
-        let pairs = cbow_params.generate_pairs(&corpus.vec);
-        let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
+    #[test]
+    fn test_update_input_layer() {
+        let mut input_layer = array![
+            [0.1, 1.0, 0.0, 3.0,],
+            [0.2, 1.0, 0.0, 3.0,],
+            [0.3, 1.0, 0.0, 3.0,]
+        ];
 
-        train(
-            &pairs,
-            &cbow_params,
-            &mut input_layer,
-            &mut hidden_layer,
-            &corpus,
+        let neu1e = array![0.1, 1.0, 0.0, 3.0];
+
+        let context = [1, 2];
+        update_input_layer(&mut input_layer, &neu1e, &context);
+        assert_eq!(
+            input_layer,
+            array![
+                [0.1, 1.0, 0.0, 3.0,],
+                [0.3, 2.0, 0.0, 6.0,],
+                [0.4, 2.0, 0.0, 6.0,]
+            ]
         );
-
-        let r = Array::from_shape_vec(
-            (3, 3),
-            [0.0, 1.0, 0.0, 3.0, 0.0, 1.0, 1.0, 0.0, 3.0].to_vec(),
-        );
-
-        println!("{:?}", r);
-        // assert_eq!(input_layer, vec![0.0]);
     }
 }

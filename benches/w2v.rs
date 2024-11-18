@@ -71,7 +71,7 @@ fn bench(c: &mut Criterion) {
     let raw_corpus = get_corpus("text7");
     let corpus = parse_corpus(raw_corpus);
 
-    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 50), (15, 200, 100)];
+    let params = [(5, 25, 5), (10, 100, 50), (15, 200, 100), (15, 200, 300)];
 
     for (random_samples, embeddings_dimension, epochs) in params {
         benchmark.bench_function(

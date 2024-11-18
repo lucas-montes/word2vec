@@ -2,6 +2,7 @@
 name = "word2vec"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
 
 [dependencies]
 ndarray = { version ="0.15.6", features = ["blas"] }
@@ -27,5 +28,5 @@ pprof = { version = "0.11.0", features = [
 debug = true
 
 [[bench]]
-name = "w2v_bench"
+name = "w2v"
 harness = false
