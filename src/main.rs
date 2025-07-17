@@ -1,8 +1,7 @@
+use clap::Parser;
 use serde_json::{json, Value};
 use std::{
-    fs::{File, OpenOptions},
-    io::{Read, Write},
-    time::Instant,
+    fs::{File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, time::Instant
 };
 use word2vec::{parse_corpus, train, CBOWParams};
 
@@ -18,7 +17,7 @@ fn generate_result(
     json!({"word": word, "embedding":embedding })
 }
 
-fn get_corpus(file_path: &str) -> String {
+fn get_corpus(file_path: &PathBuf) -> String {
     let mut f = match OpenOptions::new()
         .read(true)
         .write(false)
@@ -34,16 +33,33 @@ fn get_corpus(file_path: &str) -> String {
     corpus
 }
 
+#[derive(Debug, Parser)]
+#[command(name = "Word2Vev")]
+struct Cli {
+    #[arg(short, long, default_value = "text8")]
+    corpus: PathBuf,
+    #[arg(short, long, default_value = "100")]
+    dimension_embeddings: usize,
+    #[arg(short, long, default_value = "300")]
+    epochs: usize,
+    #[arg(short, long, default_value = "0.01")]
+    learning_rate: f32,
+    #[arg(short, long, default_value = "result.json")]
+    model: PathBuf,
+}
+
 fn main() {
+    let cli = Cli::parse();
+    println!("Running with parameters: {:?}", cli);
     let start = Instant::now();
-    let corpus = parse_corpus(get_corpus("text8"));
+    let corpus = parse_corpus(get_corpus(&cli.corpus));
     let duration = start.elapsed();
     println!("Time elapsed in parse_corpus() is: {:?}", duration);
 
     let cbow_params = CBOWParams::new(corpus.words_map.len())
-        .set_embeddings_dimension(100)
-        .set_epochs(300)
-        .set_learning_rate(0.01);
+        .set_embeddings_dimension(cli.dimension_embeddings)
+        .set_epochs(cli.epochs)
+        .set_learning_rate(cli.learning_rate);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
     let duration = start.elapsed();
@@ -69,7 +85,7 @@ fn main() {
         .write(true)
         .create(true)
         .truncate(true)
-        .open("result.json")
+        .open(&cli.model)
     {
         Ok(value) => value,
         Err(e) => panic!("Problem creating the file: {:?}", e),

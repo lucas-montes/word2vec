@@ -13,6 +13,7 @@ regex = "1.11.1"
 serde = { version = "1.0.213", features = ["derive"] }
 stop-words = "0.8.0"
 serde_json = "1.0.132"
+clap = { version = "4.5.41", features = ["derive"] }
 
 [dev-dependencies]
 criterion = { version = "0.4.0", features = ["html_reports"] }
