@@ -1,6 +1,7 @@
 use rand::thread_rng;
 use rand_distr::{Distribution, Normal, Uniform};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::{
     borrow::Cow,
     collections::{HashMap, HashSet},
@@ -212,6 +213,83 @@ pub fn train(
                 })
             });
         }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Word2VecModel {
+    pub vocab: HashMap<String, usize>,
+    pub embeddings: Vec<f32>,
+    pub embedding_dim: usize,
+}
+
+impl Word2VecModel {
+    pub fn new(vocab: HashMap<String, usize>, embeddings: Vec<f32>, embedding_dim: usize) -> Self {
+        Self {
+            vocab,
+            embeddings,
+            embedding_dim,
+        }
+    }
+
+    pub fn get_embedding(&self, word: &str) -> Option<&[f32]> {
+        self.vocab.get(word).map(|&index| {
+            let start = index * self.embedding_dim;
+            let end = start + self.embedding_dim;
+            &self.embeddings[start..end]
+        })
+    }
+
+    pub fn cosine_similarity(&self, word1: &str, word2: &str) -> Option<f32> {
+        let embedding1 = self.get_embedding(word1)?;
+        let embedding2 = self.get_embedding(word2)?;
+
+        Some(cosine_similarity(embedding1, embedding2))
+    }
+
+    pub fn most_similar(&self, word: &str, top_k: usize) -> Option<Vec<(String, f32)>> {
+        let target_embedding = self.get_embedding(word)?;
+
+        let mut similarities: Vec<(String, f32)> = self.vocab
+            .iter()
+            .filter(|(w, _)| *w != word) // Exclude the word itself
+            .map(|(w, &index)| {
+                let start = index * self.embedding_dim;
+                let end = start + self.embedding_dim;
+                let embedding = &self.embeddings[start..end];
+                let similarity = cosine_similarity(target_embedding, embedding);
+                (w.clone(), similarity)
+            })
+            .collect();
+
+        // Sort by similarity (descending)
+        similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+
+        // Take top k results
+        similarities.truncate(top_k);
+        Some(similarities)
+    }
+
+    pub fn vocab_size(&self) -> usize {
+        self.vocab.len()
+    }
+
+    pub fn contains_word(&self, word: &str) -> bool {
+        self.vocab.contains_key(word)
+    }
+}
+
+fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len());
+
+    let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
+    let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
+
+    if norm_a == 0.0 || norm_b == 0.0 {
+        0.0
+    } else {
+        dot_product / (norm_a * norm_b)
     }
 }
 

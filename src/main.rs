@@ -1,21 +1,8 @@
-use clap::Parser;
-use serde_json::{json, Value};
+use clap::{Parser, Subcommand};
 use std::{
-    fs::{File, OpenOptions}, io::{Read, Write}, path::{Path, PathBuf}, time::Instant
+    fs::OpenOptions, io::{Read, Write}, path::PathBuf, time::Instant
 };
-use word2vec::{parse_corpus, train, CBOWParams};
-
-fn generate_result(
-    word: &str,
-    index: &usize,
-    embeddings: &[f32],
-    embeddings_dimension: usize,
-) -> Value {
-    let embedding: Vec<f32> = (0..embeddings_dimension)
-        .map(|position| embeddings[position + index * embeddings_dimension])
-        .collect();
-    json!({"word": word, "embedding":embedding })
-}
+use word2vec::{parse_corpus, train, CBOWParams, Word2VecModel};
 
 fn get_corpus(file_path: &PathBuf) -> String {
     let mut f = match OpenOptions::new()
@@ -34,32 +21,70 @@ fn get_corpus(file_path: &PathBuf) -> String {
 }
 
 #[derive(Debug, Parser)]
-#[command(name = "Word2Vev")]
+#[command(name = "Word2Vec")]
 struct Cli {
-    #[arg(short, long, default_value = "text8")]
-    corpus: PathBuf,
-    #[arg(short, long, default_value = "100")]
-    dimension_embeddings: usize,
-    #[arg(short, long, default_value = "300")]
-    epochs: usize,
-    #[arg(short, long, default_value = "0.01")]
-    learning_rate: f32,
-    #[arg(short, long, default_value = "result.json")]
-    model: PathBuf,
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Debug, Subcommand)]
+enum Commands {
+    /// Train a new Word2Vec model
+    Train {
+        #[arg(short, long, default_value = "lee_background.cor")]
+        corpus: PathBuf,
+        #[arg(short, long, default_value = "100")]
+        dimension_embeddings: usize,
+        #[arg(short, long, default_value = "300")]
+        epochs: usize,
+        #[arg(short, long, default_value = "0.01")]
+        learning_rate: f32,
+        #[arg(short, long, default_value = "model.bin")]
+        model: PathBuf,
+    },
+    /// Query a trained model for word similarities
+    Query {
+        #[arg(short, long, default_value = "model.bin")]
+        model: PathBuf,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
-    println!("Running with parameters: {:?}", cli);
+
+    match cli.command {
+        Commands::Train { corpus, dimension_embeddings, epochs, learning_rate, model } => {
+            train_model(corpus, dimension_embeddings, epochs, learning_rate, model);
+        },
+        Commands::Query { model } => {
+            query_model(model);
+        }
+    }
+}
+
+fn train_model(
+    corpus_path: PathBuf,
+    dimension_embeddings: usize,
+    epochs: usize,
+    learning_rate: f32,
+    model_path: PathBuf,
+) {
+    println!("Training model with parameters:");
+    println!("  Corpus: {:?}", corpus_path);
+    println!("  Embedding dimension: {}", dimension_embeddings);
+    println!("  Epochs: {}", epochs);
+    println!("  Learning rate: {}", learning_rate);
+    println!("  Model output: {:?}", model_path);
+
     let start = Instant::now();
-    let corpus = parse_corpus(get_corpus(&cli.corpus));
+    let corpus = parse_corpus(get_corpus(&corpus_path));
     let duration = start.elapsed();
     println!("Time elapsed in parse_corpus() is: {:?}", duration);
 
     let cbow_params = CBOWParams::new(corpus.words_map.len())
-        .set_embeddings_dimension(cli.dimension_embeddings)
-        .set_epochs(cli.epochs)
-        .set_learning_rate(cli.learning_rate);
+        .set_embeddings_dimension(dimension_embeddings)
+        .set_epochs(epochs)
+        .set_learning_rate(learning_rate);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
     let duration = start.elapsed();
@@ -75,26 +100,140 @@ fn main() {
     let duration = start.elapsed();
     println!("Time elapsed in train() is: {:?}", duration);
 
-    let values = corpus
-        .words_map
-        .into_iter()
-        .map(|(k, v)| generate_result(&k, &v, &input_layer, cbow_params.embeddings_dimension()));
+    // Create and save the model
+    let model = Word2VecModel::new(corpus.words_map, input_layer, dimension_embeddings);
+    save_model(&model, &model_path);
+    println!("Model saved to {:?}", model_path);
+}
 
-    let mut file = match OpenOptions::new()
-        .read(true)
+fn query_model(model_path: PathBuf) {
+    println!("Loading model from {:?}...", model_path);
+    let model = load_model(&model_path);
+
+    println!("Model loaded successfully!");
+    println!("Vocabulary size: {}", model.vocab_size());
+    println!("Embedding dimension: {}", model.embedding_dim);
+    println!("\nAvailable commands:");
+    println!("  similarity <word1> <word2>  - Calculate cosine similarity between two words");
+    println!("  similar <word> [k]          - Find k most similar words (default k=10)");
+    println!("  embedding <word>            - Show word embedding vector");
+    println!("  vocab                       - Show first 20 words in vocabulary");
+    println!("  quit                        - Exit the program");
+    println!();
+
+    loop {
+        print!("word2vec> ");
+        std::io::Write::flush(&mut std::io::stdout()).unwrap();
+
+        let mut input = String::new();
+        match std::io::stdin().read_line(&mut input) {
+            Ok(_) => {
+                let input = input.trim();
+                if input.is_empty() {
+                    continue;
+                }
+
+                let parts: Vec<&str> = input.split_whitespace().collect();
+                match parts.as_slice() {
+                    ["quit"] | ["exit"] => {
+                        println!("Goodbye!");
+                        break;
+                    },
+                    ["similarity", word1, word2] => {
+                        match model.cosine_similarity(word1, word2) {
+                            Some(similarity) => {
+                                println!("Cosine similarity between '{}' and '{}': {:.4}", word1, word2, similarity);
+                            },
+                            None => {
+                                if !model.contains_word(word1) {
+                                    println!("Word '{}' not found in vocabulary", word1);
+                                }
+                                if !model.contains_word(word2) {
+                                    println!("Word '{}' not found in vocabulary", word2);
+                                }
+                            }
+                        }
+                    },
+                    ["similar", word] => {
+                        find_similar_words(&model, word, 10);
+                    },
+                    ["similar", word, k_str] => {
+                        match k_str.parse::<usize>() {
+                            Ok(k) => find_similar_words(&model, word, k),
+                            Err(_) => println!("Invalid number: {}", k_str),
+                        }
+                    },
+                    ["embedding", word] => {
+                        match model.get_embedding(word) {
+                            Some(embedding) => {
+                                println!("Embedding for '{}': {:?}", word, embedding);
+                            },
+                            None => {
+                                println!("Word '{}' not found in vocabulary", word);
+                            }
+                        }
+                    },
+                    ["vocab"] => {
+                        let mut words: Vec<_> = model.vocab.keys().collect();
+                        words.sort();
+                        println!("First 20 words in vocabulary:");
+                        for (i, word) in words.iter().take(20).enumerate() {
+                            println!("  {}: {}", i + 1, word);
+                        }
+                        if words.len() > 20 {
+                            println!("  ... and {} more words", words.len() - 20);
+                        }
+                    },
+                    _ => {
+                        println!("Unknown command. Available commands:");
+                        println!("  similarity <word1> <word2>");
+                        println!("  similar <word> [k]");
+                        println!("  embedding <word>");
+                        println!("  vocab");
+                        println!("  quit");
+                    }
+                }
+            },
+            Err(error) => {
+                println!("Error reading input: {}", error);
+                break;
+            }
+        }
+        println!();
+    }
+}
+
+fn find_similar_words(model: &Word2VecModel, word: &str, k: usize) {
+    match model.most_similar(word, k) {
+        Some(similar_words) => {
+            println!("Top {} words most similar to '{}':", k, word);
+            for (i, (similar_word, similarity)) in similar_words.iter().enumerate() {
+                println!("  {}: {} (similarity: {:.4})", i + 1, similar_word, similarity);
+            }
+        },
+        None => {
+            println!("Word '{}' not found in vocabulary", word);
+        }
+    }
+}
+
+fn save_model(model: &Word2VecModel, path: &PathBuf) {
+    let serialized = bincode::serialize(model).expect("Failed to serialize model");
+    let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
-        .open(&cli.model)
-    {
-        Ok(value) => value,
-        Err(e) => panic!("Problem creating the file: {:?}", e),
-    };
-    file.set_len(0).unwrap();
+        .open(path)
+        .expect("Failed to create model file");
+    file.write_all(&serialized).expect("Failed to write model to file");
+}
 
-    for value in values {
-        file.write_all(serde_json::to_string(&value).unwrap().as_bytes())
-            .expect("something");
-        file.write(b"\n").expect("something");
-    }
+fn load_model(path: &PathBuf) -> Word2VecModel {
+    let mut file = OpenOptions::new()
+        .read(true)
+        .open(path)
+        .expect("Failed to open model file");
+    let mut buffer = Vec::new();
+    file.read_to_end(&mut buffer).expect("Failed to read model file");
+    bincode::deserialize(&buffer).expect("Failed to deserialize model")
 }
