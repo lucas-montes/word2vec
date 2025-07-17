@@ -34,6 +34,7 @@
         ];
 
           buildInputs = [
+            pkgs.cargo-show-asm
             pkgs.openssl
             pkgs.pkg-config
             rust-bin-custom
