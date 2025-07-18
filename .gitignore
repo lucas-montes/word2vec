@@ -3,6 +3,10 @@ text7
 text8
 .direnv
 .venv
-model.bin
 visualizations
 *.json
+*.csv
+*.bin
+SimLex*
+logs
+*.png

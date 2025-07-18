@@ -25,6 +25,11 @@
         rust-bin-custom = pkgs.rust-bin.stable.latest.default.override {
           extensions = ["rust-src"];
         };
+        simlex-999 = pkgs.fetchzip {
+          url = "https://fh295.github.io/SimLex-999.zip";
+          sha256 = "sha256-3vCXmkzOm+P/+cy+rYOdUladUBncmej6305Bd4oX3WQ="; # You'll need to update this
+          stripRoot = false;
+        };
       in {
         devShells.default = pkgs.mkShell {
           venvDir = ".venv";
@@ -37,6 +42,8 @@
               plotly
               scikit-learn
               networkx
+              matplotlib
+              umap-learn
             ])
           ];
 

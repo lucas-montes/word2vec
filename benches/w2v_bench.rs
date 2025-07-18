@@ -4,7 +4,7 @@ use criterion::{
 };
 use pprof::criterion::{Output, PProfProfiler};
 use std::{fs::OpenOptions, io::Read, time::Duration};
-use word2vec::{parse_corpus, train, CBOWParams, CorpusValues};
+use word2vec::algo::{parse_corpus, train, CBOWParams, CorpusValues};
 
 fn set_default_benchmark_configs(benchmark: &mut BenchmarkGroup<WallTime>) {
     let sample_size: usize = 100;
@@ -73,7 +73,7 @@ fn bench(c: &mut Criterion) {
     let raw_corpus = get_corpus(CORPUS);
     let corpus = parse_corpus(raw_corpus);
 
-    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 50), (15, 200, 100)];
+    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 5), (15, 200, 5)];
 
     for (random_samples, embeddings_dimension, epochs) in params {
         benchmark.bench_function(

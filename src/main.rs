@@ -1,8 +1,15 @@
 use clap::{Parser, Subcommand};
 use std::{
-    fs::OpenOptions, io::{Read, Write}, path::PathBuf, time::Instant
+    fs::OpenOptions,
+    io::{Read, Write},
+    path::PathBuf,
+    time::Instant,
 };
-use word2vec::{parse_corpus, train, CBOWParams, Word2VecModel};
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use word2vec::{
+    algo::{parse_corpus, train, CBOWParams},
+    model::Word2VecModel,
+};
 
 fn get_corpus(file_path: &PathBuf) -> String {
     let mut f = match OpenOptions::new()
@@ -56,20 +63,49 @@ enum Commands {
         #[arg(long, default_value = "500")]
         max_words: usize,
     },
+    /// Evaluate model on SimLex-999 dataset
+    Evaluate {
+        /// Path to trained model
+        #[arg(short, long, default_value = "model.bin")]
+        model: PathBuf,
+        /// Path to SimLex-999.txt file
+        #[arg(short, long, default_value = "SimLex-999/SimLex-999.txt")]
+        input: PathBuf,
+        /// Output file for detailed results
+        #[arg(short, long, default_value = "evaluation_results.csv")]
+        output: PathBuf,
+    },
 }
 
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Train { corpus, dimension_embeddings, epochs, learning_rate, model } => {
+        Commands::Train {
+            corpus,
+            dimension_embeddings,
+            epochs,
+            learning_rate,
+            model,
+        } => {
             train_model(corpus, dimension_embeddings, epochs, learning_rate, model);
-        },
+        }
         Commands::Query { model } => {
             query_model(model);
-        },
-        Commands::Visualize { model, output, max_words } => {
+        }
+        Commands::Visualize {
+            model,
+            output,
+            max_words,
+        } => {
             visualize_model(model, output, max_words);
+        }
+        Commands::Evaluate {
+            model,
+            input,
+            output,
+        } => {
+            evaluate_model(&model, &input, &output);
         }
     }
 }
@@ -81,6 +117,25 @@ fn train_model(
     learning_rate: f32,
     model_path: PathBuf,
 ) {
+    let log_name = format!(
+        "word2vec_train_{}_{}_{}_{}.log",
+        corpus_path.to_str().unwrap(), dimension_embeddings, epochs, learning_rate
+    );
+    let file_appender = tracing_appender::rolling::never("logs", log_name);
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(non_blocking)
+                .log_internal_errors(true)
+                .with_target(false)
+                .flatten_event(true)
+                .with_span_list(false),
+        )
+        .init();
+
     println!("Training model with parameters:");
     println!("  Corpus: {:?}", corpus_path);
     println!("  Embedding dimension: {}", dimension_embeddings);
@@ -114,13 +169,13 @@ fn train_model(
 
     // Create and save the model
     let model = Word2VecModel::new(corpus.words_map, input_layer, dimension_embeddings);
-    save_model(&model, &model_path);
+    model.save(&model_path);
     println!("Model saved to {:?}", model_path);
 }
 
 fn query_model(model_path: PathBuf) {
     println!("Loading model from {:?}...", model_path);
-    let model = load_model(&model_path);
+    let model = Word2VecModel::load(&model_path);
 
     println!("Model loaded successfully!");
     println!("Vocabulary size: {}", model.vocab_size());
@@ -150,39 +205,36 @@ fn query_model(model_path: PathBuf) {
                     ["quit"] | ["exit"] => {
                         println!("Goodbye!");
                         break;
-                    },
-                    ["similarity", word1, word2] => {
-                        match model.cosine_similarity(word1, word2) {
-                            Some(similarity) => {
-                                println!("Cosine similarity between '{}' and '{}': {:.4}", word1, word2, similarity);
-                            },
-                            None => {
-                                if !model.contains_word(word1) {
-                                    println!("Word '{}' not found in vocabulary", word1);
-                                }
-                                if !model.contains_word(word2) {
-                                    println!("Word '{}' not found in vocabulary", word2);
-                                }
+                    }
+                    ["similarity", word1, word2] => match model.cosine_similarity(word1, word2) {
+                        Some(similarity) => {
+                            println!(
+                                "Cosine similarity between '{}' and '{}': {:.4}",
+                                word1, word2, similarity
+                            );
+                        }
+                        None => {
+                            if !model.contains_word(word1) {
+                                println!("Word '{}' not found in vocabulary", word1);
+                            }
+                            if !model.contains_word(word2) {
+                                println!("Word '{}' not found in vocabulary", word2);
                             }
                         }
                     },
                     ["similar", word] => {
                         find_similar_words(&model, word, 10);
+                    }
+                    ["similar", word, k_str] => match k_str.parse::<usize>() {
+                        Ok(k) => find_similar_words(&model, word, k),
+                        Err(_) => println!("Invalid number: {}", k_str),
                     },
-                    ["similar", word, k_str] => {
-                        match k_str.parse::<usize>() {
-                            Ok(k) => find_similar_words(&model, word, k),
-                            Err(_) => println!("Invalid number: {}", k_str),
+                    ["embedding", word] => match model.get_embedding(word) {
+                        Some(embedding) => {
+                            println!("Embedding for '{}': {:?}", word, embedding);
                         }
-                    },
-                    ["embedding", word] => {
-                        match model.get_embedding(word) {
-                            Some(embedding) => {
-                                println!("Embedding for '{}': {:?}", word, embedding);
-                            },
-                            None => {
-                                println!("Word '{}' not found in vocabulary", word);
-                            }
+                        None => {
+                            println!("Word '{}' not found in vocabulary", word);
                         }
                     },
                     ["vocab"] => {
@@ -195,7 +247,7 @@ fn query_model(model_path: PathBuf) {
                         if words.len() > 20 {
                             println!("  ... and {} more words", words.len() - 20);
                         }
-                    },
+                    }
                     _ => {
                         println!("Unknown command. Available commands:");
                         println!("  similarity <word1> <word2>");
@@ -205,7 +257,7 @@ fn query_model(model_path: PathBuf) {
                         println!("  quit");
                     }
                 }
-            },
+            }
             Err(error) => {
                 println!("Error reading input: {}", error);
                 break;
@@ -220,42 +272,46 @@ fn find_similar_words(model: &Word2VecModel, word: &str, k: usize) {
         Some(similar_words) => {
             println!("Top {} words most similar to '{}':", k, word);
             for (i, (similar_word, similarity)) in similar_words.iter().enumerate() {
-                println!("  {}: {} (similarity: {:.4})", i + 1, similar_word, similarity);
+                println!(
+                    "  {}: {} (similarity: {:.4})",
+                    i + 1,
+                    similar_word,
+                    similarity
+                );
             }
-        },
+        }
         None => {
             println!("Word '{}' not found in vocabulary", word);
         }
     }
 }
 
-fn save_model(model: &Word2VecModel, path: &PathBuf) {
-    let serialized = bincode::serialize(model).expect("Failed to serialize model");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(path)
-        .expect("Failed to create model file");
-    file.write_all(&serialized).expect("Failed to write model to file");
-}
+fn evaluate_model(model_path: &PathBuf, simlex_path: &PathBuf, output_path: &PathBuf) {
+    println!("Loading model from {:?}...", model_path);
 
-fn load_model(path: &PathBuf) -> Word2VecModel {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .open(path)
-        .expect("Failed to open model file");
-    let mut buffer = Vec::new();
-    file.read_to_end(&mut buffer).expect("Failed to read model file");
-    bincode::deserialize(&buffer).expect("Failed to deserialize model")
+    let model = Word2VecModel::load(model_path);
+
+    println!("Model loaded with {} words", model.vocab_size());
+
+    println!("Evaluating on SimLex-999...");
+    match model.evaluate_simlex(simlex_path, output_path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Error evaluating model: {}", e);
+            return;
+        }
+    };
 }
 
 fn visualize_model(model_path: PathBuf, output_path: PathBuf, max_words: usize) {
     println!("Loading model from {:?}...", model_path);
-    let model = load_model(&model_path);
+    let model = Word2VecModel::load(&model_path);
 
     println!("Model loaded successfully!");
-    println!("Exporting embeddings to {:?} (max words: {})...", output_path, max_words);
+    println!(
+        "Exporting embeddings to {:?} (max words: {})...",
+        output_path, max_words
+    );
 
     // Get most frequent words (first in sorted order, which typically correlates with frequency)
     let mut words: Vec<_> = model.vocab.keys().collect();
@@ -269,27 +325,47 @@ fn visualize_model(model_path: PathBuf, output_path: PathBuf, max_words: usize) 
         if let Some(embedding) = model.get_embedding(word) {
             words_array.push(serde_json::Value::String(word.to_string()));
             embeddings_array.push(serde_json::Value::Array(
-                embedding.iter().map(|&x| serde_json::Value::Number(
-                    serde_json::Number::from_f64(x as f64).unwrap_or(serde_json::Number::from(0))
-                )).collect()
+                embedding
+                    .iter()
+                    .map(|&x| {
+                        serde_json::Value::Number(
+                            serde_json::Number::from_f64(x as f64)
+                                .unwrap_or(serde_json::Number::from(0)),
+                        )
+                    })
+                    .collect(),
             ));
         }
     }
 
     export_data.insert("words".to_string(), serde_json::Value::Array(words_array));
-    export_data.insert("embeddings".to_string(), serde_json::Value::Array(embeddings_array));
-    export_data.insert("embedding_dim".to_string(), serde_json::Value::Number(serde_json::Number::from(model.embedding_dim)));
-    export_data.insert("vocab_size".to_string(), serde_json::Value::Number(serde_json::Number::from(model.vocab_size())));
+    export_data.insert(
+        "embeddings".to_string(),
+        serde_json::Value::Array(embeddings_array),
+    );
+    export_data.insert(
+        "embedding_dim".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(model.embedding_dim)),
+    );
+    export_data.insert(
+        "vocab_size".to_string(),
+        serde_json::Value::Number(serde_json::Number::from(model.vocab_size())),
+    );
 
-    let json = serde_json::to_string_pretty(&export_data).expect("Failed to serialize embeddings to JSON");
+    let json =
+        serde_json::to_string_pretty(&export_data).expect("Failed to serialize embeddings to JSON");
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .open(&output_path)
         .expect("Failed to create output file");
-    file.write_all(json.as_bytes()).expect("Failed to write embeddings to file");
+    file.write_all(json.as_bytes())
+        .expect("Failed to write embeddings to file");
 
     println!("Embeddings exported successfully!");
-    println!("Run 'python visualize_word2vec.py {}' to create visualizations", output_path.display());
+    println!(
+        "Run 'python visualize_word2vec.py {}' to create visualizations",
+        output_path.display()
+    );
 }
