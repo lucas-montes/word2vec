@@ -54,6 +54,23 @@
             rust-bin-custom
           ];
         };
+
+         # --- Add this block for the C word2vec app ---
+        apps.c-word2vec = flake-utils.lib.mkApp {
+          drv = pkgs.stdenv.mkDerivation {
+            name = "c-word2vec";
+            src = ./.;
+            buildInputs = [ pkgs.gcc pkgs.make ];
+            buildPhase = ''
+              gcc -O2 -o word2vec og.c -lm
+            '';
+            installPhase = ''
+              mkdir -p $out/bin
+              cp word2vec $out/bin/
+            '';
+          };
+          program = "word2vec";
+        };
       }
     );
 }

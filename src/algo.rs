@@ -80,6 +80,7 @@ impl CBOWParams {
         self.target = window_size;
         self
     }
+
     pub fn set_learning_rate(mut self, learning_rate: f32) -> Self {
         self.learning_rate = learning_rate;
         self
@@ -245,72 +246,18 @@ pub fn train(
     for epoch in 0..cbow_params.epochs {
         let mut epoch_loss = 0.0;
         for (context, target) in pairs {
-            // === FORWARD PASS ===
-            // pass the input layer to the hidden layer
-            for position in 0..neu1.len() {
-                let mut f = 0.0;
-                for context_index in context {
-                    //TODO: panic bound
-                    let i = position + *context_index * cbow_params.embeddings_dimension;
-                    f += &input_layer[i];
-                }
-                // neu1[position] = f;
-                neu1[position] = f / context.len() as f32;
-            }
-
-            // positive sampling
-            let target_l2 = target * cbow_params.embeddings_dimension;
-            let f = neu1
-                .iter()
-                .enumerate()
-                .map(|(i, v)| v * hidden_layer[i + target_l2])
-                .sum::<f32>();
-
-            let sig = sigmoid(f);
-            epoch_loss += -sig.ln();
-            let g = (1.0 - sig) * cbow_params.learning_rate;
-
-            for c in 0..neu1e.len() {
-                neu1e[c] = g * hidden_layer[c + target_l2];
-                hidden_layer[c + target_l2] += g * neu1[c];
-            }
-
-            // let breakpoint = between.sample(&mut rng);
-
-            let negative_samples = vocab_indices
-                .choose_multiple(&mut rng, cbow_params.random_samples + 1)
-                .filter(|&&word_idx| word_idx != *target)
-                .take(cbow_params.random_samples);
-
-            // let random_indices = corpus.vec[breakpoint..cbow_params.random_samples + breakpoint]
-            //     .iter()
-            //     .filter(|x| !x.eq(&target));
-
-            for negative_target in negative_samples {
-                let l2 = negative_target * cbow_params.embeddings_dimension;
-                let f: f32 = neu1
-                    .iter()
-                    .enumerate()
-                    .map(|(i, v)| v * hidden_layer[i + l2])
-                    .sum();
-
-                let sig = sigmoid(f);
-                epoch_loss += -(1.0 - sig).ln();
-                let g = (0.0 - sig) * cbow_params.learning_rate;
-
-                for c in 0..neu1e.len() {
-                    neu1e[c] += g * hidden_layer[c + l2];
-                    hidden_layer[c + l2] += g * neu1[c];
-                }
-            }
-
-            // === BACKPROPAGATION ===
-            // backpropagation, pass the hidden layer to the input layer
-            context.iter().for_each(|context_index| {
-                neu1e.iter().enumerate().for_each(|(k, v)| {
-                    input_layer[k + context_index * cbow_params.embeddings_dimension] += v;
-                })
-            });
+            pass(
+                context,
+                target,
+                cbow_params,
+                input_layer,
+                hidden_layer,
+                &mut neu1,
+                &mut neu1e,
+                &mut epoch_loss,
+                &mut rng,
+                &vocab_indices,
+            );
         }
         tracing::info!(epoch = epoch, epoch_loss = epoch_loss, "Training epoch");
     }
@@ -319,6 +266,108 @@ pub fn train(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_pass_basic() {
+        let cbow_params = CBOWParams::new(2)
+            .set_embeddings_dimension(2)
+            .set_learning_rate(0.1)
+            .set_random_samples(1);
+
+        // Two words in vocab, 2-dim embeddings
+        let mut input_layer = vec![0.5, -0.5, 0.3, 0.7]; // shape: [2, 2]
+        let mut hidden_layer = vec![0.1, 0.2, -0.1, 0.4]; // shape: [2, 2]
+        let mut neu1 = vec![0.0; 2];
+        let mut neu1e = vec![0.0; 2];
+        let mut epoch_loss = 0.0;
+        let mut rng = thread_rng();
+        let vocab_indices = vec![0, 1];
+
+        // Context is word 0, target is word 1
+        let context = &[0];
+        let target = &1;
+
+        pass(
+            context,
+            target,
+            &cbow_params,
+            &mut input_layer,
+            &mut hidden_layer,
+            &mut neu1,
+            &mut neu1e,
+            &mut epoch_loss,
+            &mut rng,
+            &vocab_indices,
+        );
+
+        assert_eq!(epoch_loss, 1.4943991);
+        assert_eq!(input_layer, vec![0.4895032, -0.487263, 0.3, 0.7]);
+        assert_eq!(
+            hidden_layer,
+            vec![0.07562487, 0.22437513, -0.07189117, 0.37189117]
+        );
+
+        assert_eq!(neu1, vec![0.5, -0.5]);
+        assert_eq!(neu1e, vec![-0.010496791, 0.012737007]);
+    }
+
+    #[test]
+    fn test_pass_rich_params() {
+        // Use a larger vocab and higher-dimensional embeddings
+        let cbow_params = CBOWParams::new(5)
+            .set_embeddings_dimension(4)
+            .set_learning_rate(0.2)
+            .set_random_samples(2);
+
+        // 5 words in vocab, 4-dim embeddings
+        let mut input_layer = vec![
+            0.1, 0.2, 0.3, 0.4, // word 0
+            0.5, 0.6, 0.7, 0.8, // word 1
+            0.9, 1.0, 1.1, 1.2, // word 2
+            1.3, 1.4, 1.5, 1.6, // word 3
+            1.7, 1.8, 1.9, 2.0, // word 4
+        ];
+        let mut hidden_layer = vec![
+            0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.10, 0.11, 0.12, 0.13, 0.14,
+            0.15, 0.16, 0.17, 0.18, 0.19, 0.20,
+        ];
+        let mut neu1 = vec![0.0; 4];
+        let mut neu1e = vec![0.0; 4];
+        let mut epoch_loss = 0.0;
+        let mut rng = thread_rng();
+        let vocab_indices = vec![0, 1, 2, 3, 4];
+
+        // Context is words 0, 1, 3; target is word 2
+        let context = &[0, 1, 3];
+        let target = &2;
+
+        let orig_input = input_layer.clone();
+        let orig_hidden = hidden_layer.clone();
+
+        pass(
+            context,
+            target,
+            &cbow_params,
+            &mut input_layer,
+            &mut hidden_layer,
+            &mut neu1,
+            &mut neu1e,
+            &mut epoch_loss,
+            &mut rng,
+            &vocab_indices,
+        );
+
+        // Check that loss is positive and finite
+        assert!(epoch_loss.is_finite() && epoch_loss > 0.0);
+
+        // Check that weights have changed
+        assert_ne!(input_layer, orig_input, "input_layer should be updated");
+        assert_ne!(hidden_layer, orig_hidden, "hidden_layer should be updated");
+
+        // Check that neu1 and neu1e are not all zeros
+        assert!(neu1.iter().any(|&x| x != 0.0), "neu1 should be updated");
+        assert!(neu1e.iter().any(|&x| x != 0.0), "neu1e should be updated");
+    }
 
     fn default_params() -> CBOWParams {
         CBOWParams::new(4)

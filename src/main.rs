@@ -46,6 +46,16 @@ enum Commands {
         epochs: usize,
         #[arg(short, long, default_value = "0.025")]
         learning_rate: f32,
+        #[arg(short, long, default_value = "5")]
+        window: usize,
+        #[arg(long, default_value = "5")]
+        negative: usize,
+        #[arg(long, default_value = "5")]
+        min_count: usize,
+        #[arg(long, default_value = "1")]
+        cbow: usize, // 1 for CBOW, 0 for skip-gram (not implemented)
+        #[arg(long, default_value = "1e-3")]
+        sample: f32,
         #[arg(short, long, default_value = "model.bin")]
         model: PathBuf,
     },
@@ -86,9 +96,25 @@ fn main() {
             dimension_embeddings,
             epochs,
             learning_rate,
+            window,
+            negative,
+            min_count,
+            cbow,
+            sample,
             model,
         } => {
-            train_model(corpus, dimension_embeddings, epochs, learning_rate, model);
+            train_model(
+                corpus,
+                dimension_embeddings,
+                epochs,
+                learning_rate,
+                window,
+                negative,
+                min_count,
+                cbow,
+                sample,
+                model,
+            );
         }
         Commands::Query { model } => {
             query_model(model);
@@ -115,6 +141,11 @@ fn train_model(
     dimension_embeddings: usize,
     epochs: usize,
     learning_rate: f32,
+    window: usize,
+    negative: usize,
+    min_count: usize,
+    cbow: usize,
+    sample: f32,
     model_path: PathBuf,
 ) {
     let log_name = format!(
@@ -141,6 +172,11 @@ fn train_model(
     println!("  Embedding dimension: {}", dimension_embeddings);
     println!("  Epochs: {}", epochs);
     println!("  Learning rate: {}", learning_rate);
+    println!("  Window size: {}", window);
+    println!("  Negative samples: {}", negative);
+    println!("  Min count: {}", min_count);
+    println!("  CBOW: {}", cbow);
+    println!("  Sample: {}", sample);
     println!("  Model output: {:?}", model_path);
 
     let start = Instant::now();
@@ -149,9 +185,11 @@ fn train_model(
     println!("Time elapsed in parse_corpus() is: {:?}", duration);
 
     let cbow_params = CBOWParams::new(corpus.words_map.len())
+        .set_learning_rate(learning_rate)
         .set_embeddings_dimension(dimension_embeddings)
         .set_epochs(epochs)
-        .set_learning_rate(learning_rate);
+        .set_window_size(window)
+        .set_random_samples(negative);
     let pairs = cbow_params.generate_pairs(&corpus.vec);
     let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
     let duration = start.elapsed();
