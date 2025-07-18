@@ -21,6 +21,8 @@ fn set_default_benchmark_configs(benchmark: &mut BenchmarkGroup<WallTime>) {
         .noise_threshold(noise_threshold);
 }
 
+const CORPUS: &str = "lee_background.cor";
+
 fn get_corpus(file_path: &str) -> String {
     let mut f = match OpenOptions::new()
         .read(true)
@@ -38,7 +40,7 @@ fn get_corpus(file_path: &str) -> String {
 }
 
 fn bench_text_processing() {
-    let raw_corpus = get_corpus("text7");
+    let raw_corpus = get_corpus(CORPUS);
     parse_corpus(raw_corpus);
 }
 
@@ -68,7 +70,7 @@ fn bench(c: &mut Criterion) {
     let mut benchmark = c.benchmark_group("w2v");
     set_default_benchmark_configs(&mut benchmark);
 
-    let raw_corpus = get_corpus("text7");
+    let raw_corpus = get_corpus(CORPUS);
     let corpus = parse_corpus(raw_corpus);
 
     let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 50), (15, 200, 100)];
@@ -95,7 +97,7 @@ fn bench(c: &mut Criterion) {
         );
     }
 
-    benchmark.bench_function(BenchmarkId::new("text-processing", "text7"), |bencher| {
+    benchmark.bench_function(BenchmarkId::new("text-processing", CORPUS), |bencher| {
         bencher.iter(|| bench_text_processing());
     });
 }

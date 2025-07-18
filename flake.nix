@@ -17,6 +17,8 @@
     flake-utils.lib.eachDefaultSystem (
       system: let
         overlays = [(import rust-overlay)];
+        # legPkgs = nixpkgs.legacyPackages.${system};
+
         pkgs = import nixpkgs {
           inherit system overlays;
         };
@@ -27,11 +29,16 @@
         devShells.default = pkgs.mkShell {
           venvDir = ".venv";
 
-        packages = with pkgs; [
-          (with python313Packages; [
-            venvShellHook
-          ])
-        ];
+          packages = with pkgs; [
+            (with python312Packages; [
+              venvShellHook
+              numpy
+              pandas
+              plotly
+              scikit-learn
+              networkx
+            ])
+          ];
 
           buildInputs = [
             pkgs.cargo-show-asm

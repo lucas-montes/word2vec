@@ -37,7 +37,7 @@ enum Commands {
         dimension_embeddings: usize,
         #[arg(short, long, default_value = "300")]
         epochs: usize,
-        #[arg(short, long, default_value = "0.01")]
+        #[arg(short, long, default_value = "0.025")]
         learning_rate: f32,
         #[arg(short, long, default_value = "model.bin")]
         model: PathBuf,
@@ -46,6 +46,15 @@ enum Commands {
     Query {
         #[arg(short, long, default_value = "model.bin")]
         model: PathBuf,
+    },
+    /// Export model data for visualization
+    Visualize {
+        #[arg(short, long, default_value = "model.bin")]
+        model: PathBuf,
+        #[arg(short, long, default_value = "embeddings.json")]
+        output: PathBuf,
+        #[arg(long, default_value = "500")]
+        max_words: usize,
     },
 }
 
@@ -58,6 +67,9 @@ fn main() {
         },
         Commands::Query { model } => {
             query_model(model);
+        },
+        Commands::Visualize { model, output, max_words } => {
+            visualize_model(model, output, max_words);
         }
     }
 }
@@ -236,4 +248,48 @@ fn load_model(path: &PathBuf) -> Word2VecModel {
     let mut buffer = Vec::new();
     file.read_to_end(&mut buffer).expect("Failed to read model file");
     bincode::deserialize(&buffer).expect("Failed to deserialize model")
+}
+
+fn visualize_model(model_path: PathBuf, output_path: PathBuf, max_words: usize) {
+    println!("Loading model from {:?}...", model_path);
+    let model = load_model(&model_path);
+
+    println!("Model loaded successfully!");
+    println!("Exporting embeddings to {:?} (max words: {})...", output_path, max_words);
+
+    // Get most frequent words (first in sorted order, which typically correlates with frequency)
+    let mut words: Vec<_> = model.vocab.keys().collect();
+    words.sort();
+
+    let mut export_data = serde_json::Map::new();
+    let mut embeddings_array = Vec::new();
+    let mut words_array = Vec::new();
+
+    for word in words.iter().take(max_words) {
+        if let Some(embedding) = model.get_embedding(word) {
+            words_array.push(serde_json::Value::String(word.to_string()));
+            embeddings_array.push(serde_json::Value::Array(
+                embedding.iter().map(|&x| serde_json::Value::Number(
+                    serde_json::Number::from_f64(x as f64).unwrap_or(serde_json::Number::from(0))
+                )).collect()
+            ));
+        }
+    }
+
+    export_data.insert("words".to_string(), serde_json::Value::Array(words_array));
+    export_data.insert("embeddings".to_string(), serde_json::Value::Array(embeddings_array));
+    export_data.insert("embedding_dim".to_string(), serde_json::Value::Number(serde_json::Number::from(model.embedding_dim)));
+    export_data.insert("vocab_size".to_string(), serde_json::Value::Number(serde_json::Number::from(model.vocab_size())));
+
+    let json = serde_json::to_string_pretty(&export_data).expect("Failed to serialize embeddings to JSON");
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&output_path)
+        .expect("Failed to create output file");
+    file.write_all(json.as_bytes()).expect("Failed to write embeddings to file");
+
+    println!("Embeddings exported successfully!");
+    println!("Run 'python visualize_word2vec.py {}' to create visualizations", output_path.display());
 }

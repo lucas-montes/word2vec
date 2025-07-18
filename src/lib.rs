@@ -25,7 +25,7 @@ impl CorpusValues {
         let stop_words = stop_words::get(stop_words::LANGUAGE::English);
         let mut index = 0;
         let sw: HashSet<&str> = HashSet::from_iter(stop_words.iter().map(|s| s.as_str()));
-        for word in clean_corpus.split_whitespace() {
+        for word in clean_corpus.split_whitespace().filter(|w| w.chars().all(|c| c.is_alphabetic())) {
             if !sw.contains(word) {
                 if self.words_map.contains_key(word) {
                     let i = self.words_map.get(word).unwrap();
@@ -159,6 +159,7 @@ pub fn train(
 
     for _ in 0..cbow_params.epochs {
         for (context, target) in pairs {
+            // === FORWARD PASS ===
             // pass the input layer to the hidden layer
             for position in 0..neu1.len() {
                 let mut f = 0.0;
@@ -189,7 +190,7 @@ pub fn train(
 
             let random_indices = corpus.vec[breakpoint..cbow_params.random_samples + breakpoint]
                 .iter()
-                .filter(|x| x.eq(&target));
+                .filter(|x| !x.eq(&target));
 
             for negative_target in random_indices {
                 let l2 = negative_target * cbow_params.embeddings_dimension;
@@ -206,6 +207,7 @@ pub fn train(
                 }
             }
 
+            // === BACKPROPAGATION ===
             // backpropagation, pass the hidden layer to the input layer
             context.iter().for_each(|context_index| {
                 neu1e.iter().enumerate().for_each(|(k, v)| {
