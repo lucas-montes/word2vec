@@ -1,5 +1,6 @@
 use rand::{seq::SliceRandom, thread_rng};
-use rand_distr::{Distribution, Normal, Uniform};
+use rand_distr::{Distribution, Normal};
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 use std::{
     borrow::Cow,
@@ -126,6 +127,7 @@ impl CBOWParams {
     }
 
     pub fn generate_pairs(&self, corpus: &[usize]) -> Vec<(Vec<usize>, usize)> {
+        //TODO: use an iterator instead of collecting
         corpus
             .windows(self.window_size)
             .map(|w| {
@@ -226,6 +228,50 @@ fn pass(
             input_layer[k + context_index * cbow_params.embeddings_dimension] += v;
         })
     });
+}
+
+struct UnsafePtr<T>(*mut T);
+unsafe impl<T> Sync for UnsafePtr<T> {}
+
+pub fn train_hogwild(
+    pairs: &[(Vec<usize>, usize)],
+    cbow_params: &CBOWParams,
+    input_layer: &mut [f32],
+    hidden_layer: &mut [f32],
+    corpus: &CorpusValues,
+) {
+    let vocab_indices: Vec<usize> = (0..corpus.words_map.len()).collect();
+    let emb_dim = cbow_params.embeddings_dimension;
+
+     let input_ptr = UnsafePtr(input_layer.as_mut_ptr());
+    let hidden_ptr = UnsafePtr(hidden_layer.as_mut_ptr());
+    let input_len = input_layer.len();
+    let hidden_len = hidden_layer.len();
+    unsafe {
+        pairs.par_iter().for_each(|(context, target)| {
+            let mut neu1 = vec![0.0; emb_dim];
+            let mut neu1e = vec![0.0; emb_dim];
+            let mut rng = rand::thread_rng();
+
+            // inside of the closure to avoid the smarter new fine-grained closure capturing.
+            let _ = &input_ptr;
+            let _ = &hidden_ptr;
+
+            // SAFETY: This is "Hogwild!" style, so races may occur, but it's fast.
+            pass(
+                context,
+                target,
+                cbow_params,
+                std::slice::from_raw_parts_mut(input_ptr.0, input_len),
+                std::slice::from_raw_parts_mut(hidden_ptr.0, hidden_len),
+                &mut neu1,
+                &mut neu1e,
+                &mut 0.0,
+                &mut rng,
+                &vocab_indices,
+            );
+        });
+    }
 }
 
 pub fn train(
