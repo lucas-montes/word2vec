@@ -15,6 +15,9 @@ pub struct Word2VecModel {
 
 impl Word2VecModel {
     pub fn load<P: AsRef<Path>>(path: P) -> Self {
+        if path.as_ref().extension().is_some_and(|e| e.eq("txt")) {
+            return Self::load_c_file(path).expect("Failed to load model from C file");
+        }
         let mut file = OpenOptions::new()
             .read(true)
             .open(path)
@@ -23,6 +26,37 @@ impl Word2VecModel {
         file.read_to_end(&mut buffer)
             .expect("Failed to read model file");
         bincode::deserialize(&buffer).expect("Failed to deserialize model")
+    }
+
+    fn load_c_file<P: AsRef<Path>>(path: P) -> Result<Self, Box<dyn std::error::Error>> {
+        let file = File::open(path)?;
+        let mut reader = BufReader::new(file);
+
+        let mut first_line = String::new();
+        reader.read_line(&mut first_line)?;
+        let mut header = first_line.split_whitespace();
+        let vocab_size: usize = header.next().unwrap().parse()?;
+        let embedding_dim: usize = header.next().unwrap().parse()?;
+
+        let mut vocab = HashMap::with_capacity(vocab_size);
+        let mut embeddings = Vec::with_capacity(vocab_size * embedding_dim);
+
+        for (idx, line) in reader.lines().enumerate() {
+            let line = line?;
+            let mut parts = line.split_whitespace();
+            let word = parts.next().unwrap().to_string();
+            vocab.insert(word, idx);
+
+            for val in parts {
+                embeddings.push(val.parse::<f32>()?);
+            }
+        }
+
+        Ok(Self {
+            vocab,
+            embeddings,
+            embedding_dim,
+        })
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) {
@@ -36,6 +70,7 @@ impl Word2VecModel {
         file.write_all(&serialized)
             .expect("Failed to write model to file");
     }
+
     pub fn new(vocab: HashMap<String, usize>, embeddings: Vec<f32>, embedding_dim: usize) -> Self {
         Self {
             vocab,
@@ -75,10 +110,7 @@ impl Word2VecModel {
             })
             .collect();
 
-        // Sort by similarity (descending)
         similarities.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
-
-        // Take top k results
         similarities.truncate(top_k);
         Some(similarities)
     }
@@ -101,10 +133,8 @@ impl Word2VecModel {
 
         let mut output_file = File::create(&output_path)?;
 
-        // Write header
         writeln!(output_file, "wordd,word2,human_score,model_score")?;
 
-        // Skip first line (header)
         for line in reader.lines().skip(1) {
             let line = line?;
             let mut parts = line.split('\t');
@@ -118,7 +148,6 @@ impl Word2VecModel {
                 None => "N/A".to_string(),
             };
 
-            // Write result
             writeln!(
                 output_file,
                 "{},{},{},{}",

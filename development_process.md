@@ -302,6 +302,20 @@ The codebase serves as an excellent example of:
 - Comprehensive testing and benchmarking
 - Modern development practices with Nix and CLI tools
 
+
+# 18/07/25
+added tracing to check the loss decrease
+added few python scripts to compare wiht a standard and visualize thinkgs, however they are awful and fairly useless, i should delete them
+cli to interacct with the model (query, train and visualization)
+the loss seems waaay to high, i do not know why.
+i had an error that helped improve the accuracy while selecting nefative samples, now that i changed it, the similarities are all wrong, why?
+I changed the technique to select samples, according to llm, my initial approach wasn't random enough.
+## Notes
+You want to look for asm like;
+addps
+or
+MULPS
+
 **Questions for Further Documentation:**
 1. What were the specific performance metrics achieved?
 2. How does this implementation compare to reference implementations?

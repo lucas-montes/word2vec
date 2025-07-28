@@ -10,3 +10,5 @@ visualizations
 SimLex*
 logs
 *.png
+*.txt
+asm-result
