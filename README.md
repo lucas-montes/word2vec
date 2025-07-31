@@ -35,6 +35,8 @@ Improve speed.
  nix run .#c-word2vec -- -train lee_background.cor -output c_model.txt -size 100 -window 5 -negative 5 -iter 3 -cbow 1 -alpha 0.025  -binary 0
 ```
 
+ cargo bench --bench w2v_bench -- --profile-time=30
+
 
 command for c create vectors
 ```bash

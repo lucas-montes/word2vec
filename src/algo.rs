@@ -179,8 +179,8 @@ fn pass(
     let target_l2 = target * cbow_params.embeddings_dimension;
     let f = neu1
         .iter()
-        .enumerate()
-        .map(|(i, v)| v * hidden_layer[i + target_l2])
+        .zip(&hidden_layer[target_l2..target_l2 + neu1.len()])
+        .map(|(a, b)| a * b)
         .sum::<f32>();
 
     let sig = sigmoid(f);
@@ -205,11 +205,11 @@ fn pass(
 
     for negative_target in negative_samples {
         let l2 = negative_target * cbow_params.embeddings_dimension;
-        let f: f32 = neu1
+        let f = neu1
             .iter()
-            .enumerate()
-            .map(|(i, v)| v * hidden_layer[i + l2])
-            .sum();
+            .zip(&hidden_layer[l2..l2 + neu1.len()])
+            .map(|(a, b)| a * b)
+            .sum::<f32>();
 
         let sig = sigmoid(f);
         *epoch_loss += -(1.0 - sig).ln();

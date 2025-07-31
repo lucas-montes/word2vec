@@ -51,29 +51,28 @@ fn bench(c: &mut Criterion) {
     let raw_corpus = get_corpus(CORPUS);
     let corpus = parse_corpus(raw_corpus);
 
-    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 5), (15, 200, 5)];
+    let params: [(usize, usize, usize); 3] = [(5, 25, 5), (10, 100, 5), (5, 100, 10)];
 
     for (random_samples, embeddings_dimension, epochs) in params {
         let params_name = format!(
             "random_samples-{random_samples}-embeddings_dimension-{embeddings_dimension}-epochs-{epochs}"
         );
 
-        let cbow_params = CBOWParams::new(corpus.words_map.len())
-            .set_random_samples(random_samples)
-            .set_embeddings_dimension(embeddings_dimension)
-            .set_epochs(epochs)
-            .set_learning_rate(0.01);
-        let pairs = cbow_params.generate_pairs(&corpus.vec);
-        let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
-
         benchmark.bench_function(BenchmarkId::new("training", &params_name), |bencher| {
+            let cbow_params = CBOWParams::new(corpus.words_map.len())
+                .set_random_samples(random_samples)
+                .set_embeddings_dimension(embeddings_dimension)
+                .set_epochs(epochs)
+                .set_learning_rate(0.01);
+            let pairs = cbow_params.generate_pairs(&corpus.vec);
+            let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
             bencher.iter(|| {
                 train(
-                    black_box(&pairs),
-                    black_box(&cbow_params),
-                    black_box(&mut input_layer),
-                    black_box(&mut hidden_layer),
-                    black_box(&corpus),
+                    &pairs,
+                    &cbow_params,
+                    &mut input_layer,
+                    &mut hidden_layer,
+                    &corpus,
                 )
             });
         });
@@ -81,13 +80,20 @@ fn bench(c: &mut Criterion) {
         benchmark.bench_function(
             BenchmarkId::new("parallel-training", &params_name),
             |bencher| {
+                let cbow_params = CBOWParams::new(corpus.words_map.len())
+                    .set_random_samples(random_samples)
+                    .set_embeddings_dimension(embeddings_dimension)
+                    .set_epochs(epochs)
+                    .set_learning_rate(0.01);
+                let pairs = cbow_params.generate_pairs(&corpus.vec);
+                let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
                 bencher.iter(|| {
                     train_parallel(
-                        black_box(&pairs),
-                        black_box(&cbow_params),
-                        black_box(&mut input_layer),
-                        black_box(&mut hidden_layer),
-                        black_box(&corpus),
+                        &pairs,
+                        &cbow_params,
+                        &mut input_layer,
+                        &mut hidden_layer,
+                        &corpus,
                     )
                 });
             },

@@ -428,3 +428,10 @@ Let me know if you want help aligning any of these aspects!
 
 
 pin threads to cores
+
+same time as the c model 22 min for the text8 for 100 epochs
+ nix run .#c-word2vec -- -train text8 -output c_model.txt -size 100 -window 5 -negative 5 -iter 100 -cbow 1 -alpha 0.025  -binary 0
+
+ train --epochs 100 --corpus text8 --model model_parl.bin
+
+person correlation not great, but close to the c model too. some improvements could be the learning rate
