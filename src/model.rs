@@ -144,23 +144,19 @@ impl Word2VecModel {
             let human_score = parts.nth(1).unwrap_or("N/A").parse::<f32>().unwrap_or(0.0) / 10.0;
 
             let model_score = match self.cosine_similarity(word1, word2) {
-                Some(score) => format!("{:.4}", score),
+                Some(score) => format!("{score:.4}"),
                 None => "N/A".to_string(),
             };
 
-            writeln!(
-                output_file,
-                "{},{},{},{}",
-                word1, word2, human_score, model_score
-            )?;
+            writeln!(output_file, "{word1},{word2},{human_score},{model_score}")?;
         }
 
-        println!("Evaluation complete. Results saved to {:?}.", output_path);
+        println!("Evaluation complete. Results saved to {output_path:?}.");
         Ok(())
     }
 }
 
-fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
+pub fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
     assert_eq!(a.len(), b.len());
 
     let dot_product: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
@@ -171,5 +167,17 @@ fn cosine_similarity(a: &[f32], b: &[f32]) -> f32 {
         0.0
     } else {
         dot_product / (norm_a * norm_b)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cosine() {
+        assert_eq!(cosine_similarity(&[1.5, 2.3], &[1.5, 2.3]), 0.99999994);
+
+        assert_eq!(cosine_similarity(&[-5.5, 0.3], &[9.5, 22.7]), -0.3352425);
     }
 }

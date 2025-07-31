@@ -1,14 +1,17 @@
 use clap::{Parser, Subcommand};
 use std::{
-    fs::OpenOptions,
-    io::{Read, Write},
+    collections::HashSet,
+    fs::{File, OpenOptions},
+    io::{BufWriter, IoSlice, Read, Write},
     path::PathBuf,
+    sync::{mpsc::channel, Arc},
+    thread,
     time::Instant,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 use word2vec::{
-    algo::{parse_corpus, train, CBOWParams},
-    model::Word2VecModel,
+    algo::{parse_corpus, train, train_parallel, CBOWParams},
+    model::{cosine_similarity, Word2VecModel},
 };
 
 fn get_corpus(file_path: &PathBuf) -> String {
@@ -58,20 +61,22 @@ enum Commands {
         sample: f32,
         #[arg(short, long, default_value = "model.bin")]
         model: PathBuf,
+        #[arg(short, long, default_value = "true")]
+        parallel: bool,
     },
     /// Query a trained model for word similarities
     Query {
         #[arg(short, long, default_value = "model.bin")]
         model: PathBuf,
     },
-    /// Export model data for visualization
-    Visualize {
+    /// Compare two models
+    Compare {
         #[arg(short, long, default_value = "model.bin")]
-        model: PathBuf,
-        #[arg(short, long, default_value = "embeddings.json")]
-        output: PathBuf,
-        #[arg(long, default_value = "500")]
-        max_words: usize,
+        rust_model: PathBuf,
+        #[arg(short, long, default_value = "c_model.txt")]
+        c_model: PathBuf,
+        #[arg(long)]
+        max_words: Option<usize>,
     },
     /// Evaluate model on SimLex-999 dataset
     Evaluate {
@@ -102,6 +107,7 @@ fn main() {
             cbow,
             sample,
             model,
+            parallel,
         } => {
             train_model(
                 corpus,
@@ -114,17 +120,18 @@ fn main() {
                 cbow,
                 sample,
                 model,
+                parallel,
             );
         }
         Commands::Query { model } => {
             query_model(model);
         }
-        Commands::Visualize {
-            model,
-            output,
+        Commands::Compare {
+            rust_model,
+            c_model,
             max_words,
         } => {
-            visualize_model(model, output, max_words);
+            compare_models(rust_model, c_model, max_words);
         }
         Commands::Evaluate {
             model,
@@ -147,10 +154,14 @@ fn train_model(
     cbow: usize,
     sample: f32,
     model_path: PathBuf,
+    parallel: bool,
 ) {
     let log_name = format!(
         "word2vec_train_{}_{}_{}_{}.log",
-        corpus_path.to_str().unwrap(), dimension_embeddings, epochs, learning_rate
+        corpus_path.to_str().unwrap(),
+        dimension_embeddings,
+        epochs,
+        learning_rate
     );
     let file_appender = tracing_appender::rolling::never("logs", log_name);
     let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
@@ -195,13 +206,24 @@ fn train_model(
     let duration = start.elapsed();
     println!("Time elapsed in create_matrices() is: {:?}", duration);
 
-    train(
-        &pairs,
-        &cbow_params,
-        &mut input_layer,
-        &mut hidden_layer,
-        &corpus,
-    );
+    if parallel {
+        train_parallel(
+            &pairs,
+            &cbow_params,
+            &mut input_layer,
+            &mut hidden_layer,
+            &corpus,
+        );
+    } else {
+        train(
+            &pairs,
+            &cbow_params,
+            &mut input_layer,
+            &mut hidden_layer,
+            &corpus,
+        );
+    }
+
     let duration = start.elapsed();
     println!("Time elapsed in train() is: {:?}", duration);
 
@@ -341,69 +363,110 @@ fn evaluate_model(model_path: &PathBuf, simlex_path: &PathBuf, output_path: &Pat
     };
 }
 
-fn visualize_model(model_path: PathBuf, output_path: PathBuf, max_words: usize) {
-    println!("Loading model from {:?}...", model_path);
-    let model = Word2VecModel::load(&model_path);
+enum Msg {
+    Data(String),
+    End,
+}
+
+fn compare_models(rust_model_path: PathBuf, c_model_path: PathBuf, max_words: Option<usize>) {
+    println!("Loading model from {:?}...", rust_model_path);
+    let rust_model = Arc::new(Word2VecModel::load(&rust_model_path));
 
     println!("Model loaded successfully!");
-    println!(
-        "Exporting embeddings to {:?} (max words: {})...",
-        output_path, max_words
-    );
 
-    // Get most frequent words (first in sorted order, which typically correlates with frequency)
-    let mut words: Vec<_> = model.vocab.keys().collect();
-    words.sort();
+    println!("Loading model from {:?}...", c_model_path);
+    let c_model = Arc::new(Word2VecModel::load(&c_model_path));
 
-    let mut export_data = serde_json::Map::new();
-    let mut embeddings_array = Vec::new();
-    let mut words_array = Vec::new();
+    println!("Model loaded successfully!");
 
-    for word in words.iter().take(max_words) {
-        if let Some(embedding) = model.get_embedding(word) {
-            words_array.push(serde_json::Value::String(word.to_string()));
-            embeddings_array.push(serde_json::Value::Array(
-                embedding
-                    .iter()
-                    .map(|&x| {
-                        serde_json::Value::Number(
-                            serde_json::Number::from_f64(x as f64)
-                                .unwrap_or(serde_json::Number::from(0)),
-                        )
-                    })
-                    .collect(),
-            ));
-        }
+    // let mut export_data = serde_json::Map::new();
+
+    let mut output_file = File::create("comparaison.csv").unwrap();
+
+    writeln!(output_file, "word,word2,c_score,rust_score").unwrap();
+
+    let mut seen: HashSet<(&String, &String), _> = HashSet::new();
+    let mut words: Vec<&String> = rust_model.vocab.keys().collect();
+    if let Some(max) = max_words {
+        words.truncate(max);
     }
+    // Use BufWriter for efficient file writing
+    let output_file = File::create("comparaison.csv").unwrap();
+    let mut writer = BufWriter::new(output_file);
+    writeln!(writer, "word,word2,c_score,rust_score").unwrap();
 
-    export_data.insert("words".to_string(), serde_json::Value::Array(words_array));
-    export_data.insert(
-        "embeddings".to_string(),
-        serde_json::Value::Array(embeddings_array),
-    );
-    export_data.insert(
-        "embedding_dim".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(model.embedding_dim)),
-    );
-    export_data.insert(
-        "vocab_size".to_string(),
-        serde_json::Value::Number(serde_json::Number::from(model.vocab_size())),
-    );
+    let (tx, rx) = channel();
 
-    let json =
-        serde_json::to_string_pretty(&export_data).expect("Failed to serialize embeddings to JSON");
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&output_path)
-        .expect("Failed to create output file");
-    file.write_all(json.as_bytes())
-        .expect("Failed to write embeddings to file");
+    thread::spawn(move || {
+        let mut results = Vec::with_capacity(1080);
+
+        loop {
+            let Ok(msg) = rx.try_recv() else { continue };
+            match msg {
+                Msg::End => break,
+                Msg::Data(data) => {
+                    results.push(data);
+                }
+            };
+            if results.len() >= 1080 {
+                let bufs: Vec<_> = results
+                    .iter()
+                    .map(|s| s.as_bytes())
+                    .map(IoSlice::new)
+                    .collect();
+                writer.write_vectored(&bufs).expect("Failed to write");
+                results.clear();
+            }
+        }
+        if !results.is_empty() {
+            let bufs: Vec<_> = results
+                .iter()
+                .map(|s| s.as_bytes())
+                .map(IoSlice::new)
+                .collect();
+            writer.write_vectored(&bufs).expect("Failed to write");
+            writer.flush().expect("Failed to flush");
+        }
+    });
+
+    // Use rayon for parallelism
+    use rayon::prelude::*;
+    words.par_iter().enumerate().for_each(|(i, &word1)| {
+        for word2 in words.iter().skip(i) {
+            let Some(rust_embedding1) = rust_model.get_embedding(word1) else {
+                continue;
+            };
+            let Some(c_embedding1) = c_model.get_embedding(word1) else {
+                continue;
+            };
+
+            let Some(rust_embedding2) = rust_model.get_embedding(word2) else {
+                continue;
+            };
+
+            let Some(c_embedding2) = c_model.get_embedding(word2) else {
+                continue;
+            };
+
+            let c_score = cosine_similarity(c_embedding1, c_embedding2);
+            let rust_score = cosine_similarity(rust_embedding1, rust_embedding2);
+
+            let data = format!("{word1},{word2},{c_score},{rust_score}\n");
+            tx.send(Msg::Data(data)).unwrap();
+        }
+    });
+    tx.send(Msg::End).unwrap();
+
+    // let json =
+    //     serde_json::to_string_pretty(&export_data).expect("Failed to serialize embeddings to JSON");
+    // let mut file = OpenOptions::new()
+    //     .write(true)
+    //     .create(true)
+    //     .truncate(true)
+    //     .open("comparaison.json")
+    //     .expect("Failed to create output file");
+    // file.write_all(json.as_bytes())
+    //     .expect("Failed to write embeddings to file");
 
     println!("Embeddings exported successfully!");
-    println!(
-        "Run 'python visualize_word2vec.py {}' to create visualizations",
-        output_path.display()
-    );
 }

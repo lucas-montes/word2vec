@@ -1,6 +1,6 @@
 use rand::{seq::SliceRandom, thread_rng};
 use rand_distr::{Distribution, Normal};
-use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use rayon::iter::{IntoParallelIterator, IntoParallelRefIterator, ParallelIterator};
 use regex::Regex;
 use std::{
     borrow::Cow,
@@ -233,7 +233,7 @@ fn pass(
 struct UnsafePtr<T>(*mut T);
 unsafe impl<T> Sync for UnsafePtr<T> {}
 
-pub fn train_hogwild(
+pub fn train_parallel(
     pairs: &[(Vec<usize>, usize)],
     cbow_params: &CBOWParams,
     input_layer: &mut [f32],
@@ -243,35 +243,39 @@ pub fn train_hogwild(
     let vocab_indices: Vec<usize> = (0..corpus.words_map.len()).collect();
     let emb_dim = cbow_params.embeddings_dimension;
 
-     let input_ptr = UnsafePtr(input_layer.as_mut_ptr());
+    let input_ptr = UnsafePtr(input_layer.as_mut_ptr());
     let hidden_ptr = UnsafePtr(hidden_layer.as_mut_ptr());
     let input_len = input_layer.len();
     let hidden_len = hidden_layer.len();
-    unsafe {
+
+    (0..cbow_params.epochs).into_par_iter().for_each(|epoch| {
         pairs.par_iter().for_each(|(context, target)| {
             let mut neu1 = vec![0.0; emb_dim];
             let mut neu1e = vec![0.0; emb_dim];
             let mut rng = rand::thread_rng();
+            let mut epoch_loss = 0.0;
 
             // inside of the closure to avoid the smarter new fine-grained closure capturing.
             let _ = &input_ptr;
             let _ = &hidden_ptr;
 
-            // SAFETY: This is "Hogwild!" style, so races may occur, but it's fast.
-            pass(
-                context,
-                target,
-                cbow_params,
-                std::slice::from_raw_parts_mut(input_ptr.0, input_len),
-                std::slice::from_raw_parts_mut(hidden_ptr.0, hidden_len),
-                &mut neu1,
-                &mut neu1e,
-                &mut 0.0,
-                &mut rng,
-                &vocab_indices,
-            );
+            unsafe {
+                pass(
+                    context,
+                    target,
+                    cbow_params,
+                    std::slice::from_raw_parts_mut(input_ptr.0, input_len),
+                    std::slice::from_raw_parts_mut(hidden_ptr.0, hidden_len),
+                    &mut neu1,
+                    &mut neu1e,
+                    &mut epoch_loss,
+                    &mut rng,
+                    &vocab_indices,
+                );
+            }
+            tracing::info!(epoch = epoch, epoch_loss = epoch_loss, "Training epoch");
         });
-    }
+    });
 }
 
 pub fn train(

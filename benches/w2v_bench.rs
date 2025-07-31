@@ -4,7 +4,7 @@ use criterion::{
 };
 use pprof::criterion::{Output, PProfProfiler};
 use std::{fs::OpenOptions, io::Read, time::Duration};
-use word2vec::algo::{parse_corpus, train, train_hogwild, CBOWParams};
+use word2vec::algo::{parse_corpus, train, train_parallel, CBOWParams};
 
 fn set_default_benchmark_configs(benchmark: &mut BenchmarkGroup<WallTime>) {
     let sample_size: usize = 100;
@@ -82,7 +82,7 @@ fn bench(c: &mut Criterion) {
             BenchmarkId::new("parallel-training", &params_name),
             |bencher| {
                 bencher.iter(|| {
-                    train_hogwild(
+                    train_parallel(
                         black_box(&pairs),
                         black_box(&cbow_params),
                         black_box(&mut input_layer),

@@ -322,3 +322,109 @@ MULPS
 3. What embedding quality metrics were used for validation?
 4. **RESOLVED**: ~~Negative sampling filter logic~~ - Fixed critical bug in Phase 4
 5. What are the quantitative improvements in embedding quality after the negative sampling fix?
+
+
+Does It Matter If the Loss Is High?
+The absolute value of the loss matters to some extent, but the trend (decreasing loss) and the context (task, dataset, loss function) are critical for determining whether the high loss is problematic. Here’s why:
+
+Decreasing Loss Indicates Learning:
+A decreasing loss over epochs generally means the model is learning, as it’s reducing the error between predictions and true targets. In your logs, the loss decreases slightly from ~1991 (epoch 267) to ~1777 (epoch 299), with fluctuations (e.g., a spike to 2147 in epoch 268). This suggests some learning is happening, which is positive.
+If the loss is decreasing consistently, it’s a sign that the optimization process (e.g., gradient descent) is moving the model parameters toward a better solution, even if the absolute values are high.
+High Loss Values in Context:
+In your CBOW model, the loss is the negative log-likelihood of sigmoid probabilities for positive and negative samples, summed over all training examples in an epoch. High loss values (~1777–2147) could be expected if:
+Large Dataset: If your dataset has many examples (e.g., thousands or millions, common in Word2Vec with large corpora like Wikipedia), the loss accumulates across examples. For example, if each example has a loss of ~0.5–1.0 and you have 2000–4000 examples per epoch, the total loss could naturally reach ~1000–4000.
+Number of Negative Samples: Your code uses cbow_params.random_samples negative samples per example, each contributing to the loss. If this is high (e.g., 5–20), it amplifies the epoch loss.
+Unnormalized Data/Embeddings: If the embeddings (input_layer and hidden_layer) have large values, the dot products (f) in your code can lead to unstable sigmoid outputs, inflating the loss.
+However, at epochs 267–299, the loss should ideally be much lower (e.g., tens or low hundreds for a large dataset) if the model is converging well. Your values (~1777–2147) are high for such late epochs, suggesting the model may not be learning as effectively as it could.
+When High Loss Is a Problem:
+Slow Convergence: If the loss is decreasing but still high after 267+ epochs, the model may be converging too slowly due to issues like a suboptimal learning rate, poor initialization, or insufficient training iterations.
+Plateauing: Your logs show fluctuations (e.g., 2147 in epoch 268, 1777 in epoch 299), indicating the model might be stuck in a suboptimal region or oscillating, which can prevent further loss reduction.
+Task Performance: For CBOW, the ultimate goal is to produce high-quality word embeddings. Even if the loss is high, the embeddings might still be useful if they capture meaningful relationships (e.g., high cosine similarity for related words like “king” and “queen”). However, high loss often correlates with poor embedding quality, so you should validate this.
+Comparison to Expected Values: In Word2Vec, per-example loss should ideally drop to ~0.1–0.5 for a well-trained model (sigmoid probabilities close to 1 for positive samples, 0 for negative). If your average per-example loss is still high (e.g., >1.0), the model isn’t learning effectively.
+Null Losses: The null losses in your logs (e.g., epochs 275, 278, 280) are a red flag, as they suggest issues like:
+Numerical Instability: Large dot products causing sigmoid(f) to be 0 or 1, leading to -ln(0) (undefined, resulting in NaN).
+Logging/Computation Errors: The training loop or logging mechanism might fail to record the loss.
+These must be fixed, as they indicate incomplete or invalid training iterations, undermining the reliability of the loss trend.
+
+
+There are several important differences between your C (og.c) and Rust (algo.rs) implementations of word2vec. Here are the main ones based on your code:
+
+1. Corpus Preprocessing
+C: Reads words directly from file, treats any non-alphabetic character as a separator, and does not explicitly lowercase or remove punctuation.
+Rust: Explicitly lowercases the corpus and removes punctuation using a regex. Also filters out stop words.
+Effect:
+Rust may have a smaller, cleaner vocabulary and different word indices, leading to different embeddings and similarity scores.
+
+2. Stop Words
+C: Does not remove stop words.
+Rust: Removes English stop words using the stop_words crate.
+Effect:
+This changes the context and frequency of words, affecting training and resulting vectors.
+
+3. Random Initialization
+C: Uses a custom random number generator and initializes weights in a specific way.
+Rust: Uses the rand and rand_distr crates, with a normal distribution for initialization.
+Effect:
+Different initial weights can lead to different training trajectories, especially with small corpora or few epochs.
+
+4. Training Algorithm
+C: Implements both CBOW and Skip-gram, supports hierarchical softmax and negative sampling, and uses multi-threading with Hogwild! style updates.
+Rust: Only implements CBOW (from the code shown), with negative sampling. Also supports Hogwild! style parallelism via Rayon, but the main train function is single-threaded.
+Effect:
+If you use different architectures or training settings, results will differ.
+
+5. Context Window
+C: The window size is dynamic (randomized per word).
+Rust: The window size is fixed for all pairs.
+Effect:
+This changes the context words used for each target, affecting training.
+
+6. Negative Sampling
+C: Uses a precomputed unigram table for negative sampling.
+Rust: Samples negatives from the vocabulary indices using choose_multiple.
+Effect:
+The distribution of negative samples may differ, affecting training.
+
+7. Learning Rate
+C: Learning rate (alpha) decays linearly during training.
+Rust: Learning rate is fixed per epoch.
+Effect:
+Affects convergence and final embeddings.
+
+8. Vocabulary and Indexing
+C: Builds vocabulary as it reads the corpus, no explicit mapping to indices shown.
+Rust: Builds a HashMap of word to index, which may result in different orderings.
+Effect:
+Word indices may not match between implementations, so embeddings for the "same" word may not be directly comparable unless you align vocabularies.
+
+9. Output Format
+C: Can output in binary or text, with or without K-means clustering.
+Rust: Output format not shown, but likely different.
+Summary Table
+Feature	C Implementation	Rust Implementation
+Lowercasing	No	Yes
+Punctuation removal	No	Yes (regex)
+Stop word removal	No	Yes
+Random init	Custom	rand_distr Normal
+CBOW/Skip-gram	Both	CBOW only (shown)
+Window size	Dynamic	Fixed
+Negative sampling	Unigram table	Uniform random
+Learning rate decay	Yes	No (fixed)
+Parallelism	Hogwild!	Rayon (optional)
+Output format	Binary/Text	Not shown
+Why are your results so different?
+Vocabulary and word order are likely different.
+Corpus preprocessing is stricter in Rust.
+Training hyperparameters and algorithms differ.
+Negative sampling and learning rate schedules are not matched.
+To make results comparable:
+
+Use the same preprocessing (lowercasing, punctuation, stop words).
+Align vocabularies and word indices.
+Match all hyperparameters (window, negative samples, learning rate, epochs).
+Use the same random seed and initialization if possible.
+Ensure both use the same training algorithm (CBOW/Skip-gram, negative sampling, etc.).
+Let me know if you want help aligning any of these aspects!
+
+
+pin threads to cores
