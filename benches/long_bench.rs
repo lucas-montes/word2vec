@@ -4,7 +4,7 @@ use criterion::{
 };
 use pprof::criterion::{Output, PProfProfiler};
 use std::{fs::OpenOptions, io::Read, time::Duration};
-use word2vec::algo::{parse_corpus, train, train_parallel, train_parallel_pinned, CBOWParams};
+use word2vec::algo::{parse_corpus, train_parallel, train_parallel_pinned, CBOWParams};
 
 fn set_default_benchmark_configs(benchmark: &mut BenchmarkGroup<WallTime>) {
     let sample_size: usize = 100;
@@ -53,28 +53,6 @@ fn bench(c: &mut Criterion) {
     let params_name = format!(
             "random_samples-{random_samples}-embeddings_dimension-{embeddings_dimension}-epochs-{epochs}"
         );
-
-    benchmark.bench_function(
-        BenchmarkId::new("parallel-single-thread", &params_name),
-        |bencher| {
-            let cbow_params = CBOWParams::new(corpus.words_map.len())
-                .set_random_samples(random_samples)
-                .set_embeddings_dimension(embeddings_dimension)
-                .set_epochs(epochs)
-                .set_learning_rate(0.01);
-            let pairs = cbow_params.generate_pairs(&corpus.vec);
-            let (mut input_layer, mut hidden_layer) = cbow_params.create_matrices();
-            bencher.iter(|| {
-                train(
-                    &pairs,
-                    &cbow_params,
-                    &mut input_layer,
-                    &mut hidden_layer,
-                    &corpus,
-                )
-            });
-        },
-    );
 
     benchmark.bench_function(
         BenchmarkId::new("parallel-training", &params_name),

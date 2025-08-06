@@ -152,6 +152,7 @@ fn sigmoid(x: f32) -> f32 {
     1.0 / (1.0 + x.neg().exp())
 }
 
+
 fn pass(
     context: &[usize],
     target: &usize,
@@ -165,7 +166,7 @@ fn pass(
     vocab_indices: &[usize],
 ) {
     // === FORWARD PASS ===
-    for position in 0..neu1.len() {
+    for (position, v) in neu1.iter_mut().enumerate() {
         let mut f = 0.0;
         for context_index in context {
             //TODO: panic bound
@@ -173,7 +174,7 @@ fn pass(
             f += &input_layer[i];
         }
         // neu1[position] = f;
-        neu1[position] = f / context.len() as f32;
+        *v = f / context.len() as f32;
     }
 
     // positive sampling
@@ -188,12 +189,11 @@ fn pass(
     *epoch_loss += -sig.ln();
     let g = (1.0 - sig) * cbow_params.learning_rate;
 
-    for c in 0..neu1e.len() {
-        neu1e[c] = g * hidden_layer[c + target_l2];
-        hidden_layer[c + target_l2] += g * neu1[c];
+    for (c, v) in neu1e.iter_mut().enumerate() {
+        let hid = &mut hidden_layer[c + target_l2];
+        *v = g * *hid;
+        *hid += g * neu1[c];
     }
-
-    // let breakpoint = between.sample(&mut rng);
 
     let negative_samples = vocab_indices
         .choose_multiple(rng, cbow_params.random_samples + 1)
@@ -212,9 +212,10 @@ fn pass(
         *epoch_loss += -(1.0 - sig).ln();
         let g = (0.0 - sig) * cbow_params.learning_rate;
 
-        for c in 0..neu1e.len() {
-            neu1e[c] += g * hidden_layer[c + l2];
-            hidden_layer[c + l2] += g * neu1[c];
+        for (c, v) in neu1e.iter_mut().enumerate() {
+            let hid = &mut hidden_layer[c + l2];
+            *v += g * *hid;
+            *hid += g * neu1[c];
         }
     }
 
@@ -237,6 +238,8 @@ pub fn train_parallel_pinned(
     hidden_layer: &mut [f32],
     corpus: &CorpusValues,
 ) {
+
+
     // Get available CPU cores
     let core_ids = get_core_ids().unwrap();
 
