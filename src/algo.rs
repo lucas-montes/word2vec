@@ -8,6 +8,8 @@ use std::{
     ops::Neg,
 };
 
+use crate::cores::{get_core_ids, set_for_current};
+
 #[derive(Debug)]
 pub struct CorpusValues {
     pub words_map: HashMap<String, usize>,
@@ -163,7 +165,6 @@ fn pass(
     vocab_indices: &[usize],
 ) {
     // === FORWARD PASS ===
-    // pass the input layer to the hidden layer
     for position in 0..neu1.len() {
         let mut f = 0.0;
         for context_index in context {
@@ -199,10 +200,6 @@ fn pass(
         .filter(|&&word_idx| word_idx != *target)
         .take(cbow_params.random_samples);
 
-    // let random_indices = corpus.vec[breakpoint..cbow_params.random_samples + breakpoint]
-    //     .iter()
-    //     .filter(|x| !x.eq(&target));
-
     for negative_target in negative_samples {
         let l2 = negative_target * cbow_params.embeddings_dimension;
         let f = neu1
@@ -232,6 +229,70 @@ fn pass(
 
 struct UnsafePtr<T>(*mut T);
 unsafe impl<T> Sync for UnsafePtr<T> {}
+
+pub fn train_parallel_pinned(
+    pairs: &[(Vec<usize>, usize)],
+    cbow_params: &CBOWParams,
+    input_layer: &mut [f32],
+    hidden_layer: &mut [f32],
+    corpus: &CorpusValues,
+) {
+    // Get available CPU cores
+    let core_ids = get_core_ids().unwrap();
+
+    // Configure Rayon with pinned threads
+    let pool = rayon::ThreadPoolBuilder::new()
+        .num_threads(core_ids.len())
+        .spawn_handler(|thread| {
+            let core_id = core_ids[thread.index() % core_ids.len()];
+            std::thread::spawn(move || {
+                // Pin this thread to a specific core
+                set_for_current(core_id);
+                thread.run()
+            });
+            Ok(())
+        })
+        .build()
+        .unwrap();
+
+    pool.install(|| {
+        let vocab_indices: Vec<usize> = (0..corpus.words_map.len()).collect();
+        let emb_dim = cbow_params.embeddings_dimension;
+
+        let input_ptr = UnsafePtr(input_layer.as_mut_ptr());
+        let hidden_ptr = UnsafePtr(hidden_layer.as_mut_ptr());
+        let input_len = input_layer.len();
+        let hidden_len = hidden_layer.len();
+        (0..cbow_params.epochs).into_par_iter().for_each(|epoch| {
+            pairs.par_iter().for_each(|(context, target)| {
+                let mut neu1 = vec![0.0; emb_dim];
+                let mut neu1e = vec![0.0; emb_dim];
+                let mut rng = rand::thread_rng();
+                let mut epoch_loss = 0.0;
+
+                // inside of the closure to avoid the smarter new fine-grained closure capturing.
+                let _ = &input_ptr;
+                let _ = &hidden_ptr;
+
+                unsafe {
+                    pass(
+                        context,
+                        target,
+                        cbow_params,
+                        std::slice::from_raw_parts_mut(input_ptr.0, input_len),
+                        std::slice::from_raw_parts_mut(hidden_ptr.0, hidden_len),
+                        &mut neu1,
+                        &mut neu1e,
+                        &mut epoch_loss,
+                        &mut rng,
+                        &vocab_indices,
+                    );
+                }
+                tracing::info!(epoch = epoch, epoch_loss = epoch_loss, "Training epoch");
+            });
+        });
+    });
+}
 
 pub fn train_parallel(
     pairs: &[(Vec<usize>, usize)],

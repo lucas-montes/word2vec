@@ -1,6 +1,5 @@
 use clap::{Parser, Subcommand};
 use std::{
-    collections::HashSet,
     fs::{File, OpenOptions},
     io::{BufWriter, IoSlice, Read, Write},
     path::PathBuf,
@@ -385,7 +384,6 @@ fn compare_models(rust_model_path: PathBuf, c_model_path: PathBuf, max_words: Op
 
     writeln!(output_file, "word,word2,c_score,rust_score").unwrap();
 
-    let mut seen: HashSet<(&String, &String), _> = HashSet::new();
     let mut words: Vec<&String> = rust_model.vocab.keys().collect();
     if let Some(max) = max_words {
         words.truncate(max);
